@@ -1,0 +1,50 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PiKVM Connection",
+        "description": "Enter the connection details for your PiKVM device.",
+        "data": {
+          "url": "URL",
+          "username": "Username",
+          "password": "Password",
+          "totp_secret": "TOTP Secret",
+          "verify_ssl": "Verify SSL certificate"
+        },
+        "data_description": {
+          "url": "The base URL of your PiKVM device (e.g., https://pikvm.local)",
+          "totp_secret": "The TOTP secret key for two-factor authentication"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate PiKVM",
+        "description": "The PiKVM credentials are no longer valid. Please enter updated credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "totp_secret": "TOTP Secret"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure PiKVM",
+        "description": "Update the connection details for your PiKVM device.",
+        "data": {
+          "url": "URL",
+          "username": "Username",
+          "password": "Password",
+          "totp_secret": "TOTP Secret",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to PiKVM device",
+      "invalid_auth": "Invalid authentication credentials",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This PiKVM device is already configured",
+      "reauth_successful": "Re-authentication was successful"
+    }
+  }
+}
