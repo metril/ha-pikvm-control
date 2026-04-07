@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,9 +60,23 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: PikvmDataUpdateCoordinator = data["coordinator"]
 
-    async_add_entities(
+    entities: list[ButtonEntity] = [
         PikvmButton(coordinator, entry, desc) for desc in BUTTONS
-    )
+    ]
+
+    # Add GPIO output channels with pulse config as buttons
+    gpio_model = coordinator.data.get("gpio_model", {}) if coordinator.data else {}
+    for channel_name, config in gpio_model.get("outputs", {}).items():
+        if channel_name.startswith("__"):
+            continue
+        # Channels with pulse config but not switch become buttons
+        if config.get("pulse") and not config.get("switch", False):
+            delay = config["pulse"].get("delay", 0)
+            entities.append(
+                PikvmGpioPulseButton(coordinator, entry, channel_name, delay)
+            )
+
+    async_add_entities(entities)
 
 
 class PikvmButton(PikvmEntity, ButtonEntity):
@@ -89,4 +104,35 @@ class PikvmButton(PikvmEntity, ButtonEntity):
         except Exception as err:
             raise HomeAssistantError(
                 f"Failed to send ATX {self.entity_description.button_type}: {err}"
+            ) from err
+
+
+class PikvmGpioPulseButton(PikvmEntity, ButtonEntity):
+    """A PiKVM GPIO output channel as a pulse button."""
+
+    def __init__(
+        self,
+        coordinator: PikvmDataUpdateCoordinator,
+        entry: ConfigEntry,
+        channel_name: str,
+        delay: float,
+    ) -> None:
+        """Initialize the GPIO pulse button."""
+        super().__init__(coordinator, entry)
+        self._channel_name = channel_name
+        self._delay = delay
+        self._attr_unique_id = f"{entry.entry_id}_gpio_pulse_{channel_name}"
+        clean = re.sub(r"^ch\d+_", "", channel_name).replace("_", " ").title()
+        self._attr_name = f"GPIO {clean}"
+        self._attr_icon = "mdi:gesture-tap-button"
+
+    async def async_press(self) -> None:
+        """Pulse the GPIO channel."""
+        try:
+            await self.coordinator.client.gpio_pulse(
+                self._channel_name, self._delay
+            )
+        except Exception as err:
+            raise HomeAssistantError(
+                f"Failed to pulse GPIO {self._channel_name}: {err}"
             ) from err
