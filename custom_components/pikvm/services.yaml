@@ -1,0 +1,36 @@
+send_shortcut:
+  name: Send Keyboard Shortcut
+  description: Send a keyboard shortcut to the remote system via PiKVM.
+  fields:
+    device_id:
+      name: Device
+      description: The PiKVM device to send the shortcut to.
+      required: true
+      selector:
+        device:
+          integration: pikvm
+    keys:
+      name: Keys
+      description: "Comma-separated key names (e.g., ControlLeft,AltLeft,Delete)."
+      required: true
+      example: "ControlLeft,AltLeft,Delete"
+      selector:
+        text:
+
+type_text:
+  name: Type Text
+  description: Type a text string on the remote system via PiKVM.
+  fields:
+    device_id:
+      name: Device
+      description: The PiKVM device to type on.
+      required: true
+      selector:
+        device:
+          integration: pikvm
+    text:
+      name: Text
+      description: The text to type.
+      required: true
+      selector:
+        text:

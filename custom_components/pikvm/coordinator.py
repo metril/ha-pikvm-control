@@ -1,0 +1,240 @@
+"""WebSocket-based coordinator for PiKVM Control."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+import aiohttp
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
+from .api import PikvmApiClient, PikvmAuthError, PikvmConnectionError
+from .const import DOMAIN, WS_RECONNECT_DELAY
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Coordinator that maintains a WebSocket connection to PiKVM.
+
+    Receives real-time state updates via WebSocket events.
+    No polling — state is pushed by PiKVM when it changes.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        client: PikvmApiClient,
+    ) -> None:
+        """Initialize the coordinator."""
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"PiKVM {entry.title}",
+            # No update_interval — we use WebSocket push, not polling
+        )
+        self.client = client
+        self.entry = entry
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._ws_task: asyncio.Task | None = None
+        self._state: dict[str, Any] = {
+            "atx": {},
+            "system": {},
+            "hid": {},
+            "msd": {},
+            "gpio": {"inputs": {}, "outputs": {}},
+            "gpio_model": {"inputs": {}, "outputs": {}},
+        }
+
+    async def async_start(self) -> None:
+        """Start the WebSocket connection."""
+        self._ws_task = self.hass.async_create_background_task(
+            self._ws_loop(), f"pikvm_ws_{self.entry.entry_id}"
+        )
+
+    async def async_stop(self) -> None:
+        """Stop the WebSocket connection."""
+        if self._ws_task:
+            self._ws_task.cancel()
+            self._ws_task = None
+        if self._ws and not self._ws.closed:
+            await self._ws.close()
+            self._ws = None
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Return current state. Called by HA on first refresh."""
+        # Fetch initial state via HTTP
+        try:
+            atx, hw_info, hid, msd, gpio = await asyncio.gather(
+                self.client.get_atx_state(),
+                self.client.get_system_info(),
+                self.client.get_hid_state(),
+                self.client.get_msd_state(),
+                self.client.get_gpio_state(),
+            )
+        except PikvmAuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except PikvmConnectionError as err:
+            raise Exception(str(err)) from err
+
+        self._process_atx_event(atx)
+        self._process_hw_event(hw_info)
+        self._process_hid_event(hid)
+        self._process_msd_event(msd)
+        self._process_gpio_full(gpio)
+
+        return dict(self._state)
+
+    async def _ws_loop(self) -> None:
+        """Maintain WebSocket connection with automatic reconnect."""
+        while True:
+            try:
+                await self._ws_connect_and_listen()
+            except PikvmAuthError as err:
+                _LOGGER.error("PiKVM WebSocket auth failed: %s", err)
+                self.entry.async_start_reauth(self.hass)
+                return  # Stop reconnecting on auth failure
+            except (PikvmConnectionError, aiohttp.ClientError, Exception) as err:
+                _LOGGER.warning(
+                    "PiKVM WebSocket disconnected: %s. Reconnecting in %ds",
+                    err,
+                    WS_RECONNECT_DELAY,
+                )
+            await asyncio.sleep(WS_RECONNECT_DELAY)
+
+    async def _ws_connect_and_listen(self) -> None:
+        """Connect to WebSocket and process events."""
+        self._ws = await self.client.connect_ws()
+        _LOGGER.info("PiKVM WebSocket connected")
+
+        try:
+            async for msg in self._ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    self._process_ws_message(msg.json())
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    _LOGGER.error("PiKVM WebSocket error: %s", self._ws.exception())
+                    break
+                elif msg.type in (
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.CLOSING,
+                    aiohttp.WSMsgType.CLOSED,
+                ):
+                    break
+        finally:
+            if self._ws and not self._ws.closed:
+                await self._ws.close()
+            self._ws = None
+
+    @callback
+    def _process_ws_message(self, data: dict[str, Any]) -> None:
+        """Process a WebSocket message and update state."""
+        event_type = data.get("event_type", "")
+        event = data.get("event", {})
+
+        updated = False
+
+        if event_type == "atx_state":
+            self._process_atx_event(event)
+            updated = True
+        elif event_type == "info_hw_state":
+            self._process_hw_event({"hw": event} if "hw" not in event else event)
+            updated = True
+        elif event_type == "hid_state":
+            self._process_hid_event(event)
+            updated = True
+        elif event_type == "msd_state":
+            self._process_msd_event(event)
+            updated = True
+        elif event_type == "gpio_state":
+            self._process_gpio_state_event(event)
+            updated = True
+        elif event_type == "gpio_model_state":
+            self._process_gpio_model_event(event)
+            updated = True
+        elif event_type == "loop":
+            _LOGGER.debug("PiKVM WebSocket initial state bundle complete")
+
+        if updated:
+            self.async_set_updated_data(dict(self._state))
+
+    def _process_atx_event(self, event: dict[str, Any]) -> None:
+        """Process ATX state."""
+        self._state["atx"] = {
+            "busy": event.get("busy", False),
+            "enabled": event.get("enabled", True),
+            "leds": {
+                "power": event.get("leds", {}).get("power", False),
+                "hdd": event.get("leds", {}).get("hdd", False),
+            },
+        }
+
+    def _process_hw_event(self, event: dict[str, Any]) -> None:
+        """Process hardware info state."""
+        hw = event.get("hw", event)
+        health = hw.get("health", {})
+        throttling = health.get("throttling", {})
+        parsed = throttling.get("parsed_flags", {})
+
+        self._state["system"] = {
+            "cpu_temp": health.get("temp", {}).get("cpu"),
+            "cpu_percent": health.get("cpu", {}).get("percent"),
+            "mem_percent": health.get("mem", {}).get("percent"),
+            "throttling": {
+                "undervoltage": parsed.get("undervoltage", {}).get("now", False),
+                "freq_capped": parsed.get("freq_capped", {}).get("now", False),
+                "throttled": parsed.get("throttled", {}).get("now", False),
+            },
+        }
+
+    def _process_hid_event(self, event: dict[str, Any]) -> None:
+        """Process HID state."""
+        jiggler = event.get("jiggler", {})
+        self._state["hid"] = {
+            "connected": event.get("connected", False),
+            "jiggler": jiggler.get("enabled", False) if isinstance(jiggler, dict) else bool(jiggler),
+        }
+
+    def _process_msd_event(self, event: dict[str, Any]) -> None:
+        """Process MSD state."""
+        drive = event.get("drive", event)
+        self._state["msd"] = {
+            "connected": drive.get("connected", False),
+            "image": drive.get("image"),
+            "cdrom": drive.get("cdrom", False),
+            "rw": drive.get("rw", False),
+        }
+
+    def _process_gpio_full(self, event: dict[str, Any]) -> None:
+        """Process full GPIO response (from HTTP GET /api/gpio)."""
+        model = event.get("model", {}).get("scheme", {})
+        state = event.get("state", {})
+
+        self._state["gpio_model"] = {
+            "inputs": model.get("inputs", {}),
+            "outputs": model.get("outputs", {}),
+        }
+        self._state["gpio"] = {
+            "inputs": state.get("inputs", {}),
+            "outputs": state.get("outputs", {}),
+        }
+
+    def _process_gpio_state_event(self, event: dict[str, Any]) -> None:
+        """Process GPIO state update from WebSocket."""
+        if "inputs" in event:
+            self._state["gpio"]["inputs"].update(event["inputs"])
+        if "outputs" in event:
+            self._state["gpio"]["outputs"].update(event["outputs"])
+
+    def _process_gpio_model_event(self, event: dict[str, Any]) -> None:
+        """Process GPIO model update from WebSocket."""
+        scheme = event.get("scheme", event)
+        if "inputs" in scheme:
+            self._state["gpio_model"]["inputs"].update(scheme["inputs"])
+        if "outputs" in scheme:
+            self._state["gpio_model"]["outputs"].update(scheme["outputs"])
