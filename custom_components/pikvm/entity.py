@@ -10,6 +10,13 @@ from .const import CONF_PIKVM_URL, DOMAIN
 from .coordinator import PikvmDataUpdateCoordinator
 
 
+def gpio_display_name(channel_name: str, labels: dict[str, str]) -> str:
+    """Get display name for a GPIO channel with 'GPIO:' prefix for grouping."""
+    if channel_name in labels:
+        return f"GPIO: {labels[channel_name]}"
+    return f"GPIO: {channel_name}"
+
+
 class PikvmEntity(CoordinatorEntity[PikvmDataUpdateCoordinator]):
     """Base entity for PiKVM devices."""
 

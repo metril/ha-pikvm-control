@@ -18,20 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import PikvmDataUpdateCoordinator
-from .entity import PikvmEntity
-
-
-def _gpio_display_name(channel_name: str, labels: dict[str, str]) -> str:
-    """Get display name for a GPIO channel.
-
-    Uses the human-readable label from PiKVM's view.table if available,
-    otherwise falls back to cleaning the raw channel name.
-    """
-    if channel_name in labels:
-        return labels[channel_name]
-    import re
-    name = re.sub(r"^ch\d+_", "", channel_name)
-    return name.replace("_", " ").title()
+from .entity import PikvmEntity, gpio_display_name
 
 
 @dataclass(frozen=True)
@@ -138,7 +125,7 @@ class PikvmGpioInputSensor(PikvmEntity, BinarySensorEntity):
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_gpio_in_{channel_name}"
         gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
-        self._attr_name = _gpio_display_name(channel_name, gpio_labels)
+        self._attr_name = gpio_display_name(channel_name, gpio_labels)
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property

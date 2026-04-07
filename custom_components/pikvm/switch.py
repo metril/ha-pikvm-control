@@ -12,20 +12,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-import re
-
 from .api import PikvmApiClient
 from .const import DOMAIN
-
-
-def _gpio_display_name(channel_name: str, labels: dict[str, str]) -> str:
-    """Get display name for a GPIO channel."""
-    if channel_name in labels:
-        return labels[channel_name]
-    name = re.sub(r"^ch\d+_", "", channel_name)
-    return name.replace("_", " ").title()
 from .coordinator import PikvmDataUpdateCoordinator
-from .entity import PikvmEntity
+from .entity import PikvmEntity, gpio_display_name
 
 
 @dataclass(frozen=True)
@@ -139,7 +129,7 @@ class PikvmGpioSwitch(PikvmEntity, SwitchEntity):
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_gpio_out_{channel_name}"
         gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
-        self._attr_name = _gpio_display_name(channel_name, gpio_labels)
+        self._attr_name = gpio_display_name(channel_name, gpio_labels)
         self._attr_icon = "mdi:electric-switch"
 
     @property
