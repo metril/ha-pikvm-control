@@ -93,6 +93,41 @@ class PikvmApiClient:
                 f"Connection error: {err}"
             ) from err
 
+    async def _request_raw(
+        self,
+        method: str,
+        path: str,
+        **kwargs: Any,
+    ) -> bytes:
+        """Make an authenticated HTTP request returning raw bytes."""
+        url = f"{self._url}{path}"
+        try:
+            async with self._session.request(
+                method,
+                url,
+                auth=self._auth(),
+                ssl=self._verify_ssl if not self._verify_ssl else None,
+                timeout=aiohttp.ClientTimeout(total=10),
+                **kwargs,
+            ) as resp:
+                if resp.status in (401, 403):
+                    raise PikvmAuthError(
+                        f"Authentication failed (HTTP {resp.status})"
+                    )
+                if resp.status != 200:
+                    raise PikvmApiError(
+                        f"API error: HTTP {resp.status}"
+                    )
+                return await resp.read()
+        except aiohttp.ClientConnectorError as err:
+            raise PikvmConnectionError(
+                f"Failed to connect to PiKVM: {err}"
+            ) from err
+        except aiohttp.ClientError as err:
+            raise PikvmConnectionError(
+                f"Connection error: {err}"
+            ) from err
+
     # --- Connection test ---
 
     async def test_connection(self) -> None:
@@ -181,6 +216,21 @@ class PikvmApiClient:
         await self._request(
             "POST", f"/api/gpio/pulse?channel={channel}&delay={delay}"
         )
+
+    # --- Snapshot ---
+
+    async def get_snapshot(
+        self,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> bytes:
+        """Fetch a JPEG snapshot from the video streamer."""
+        params = "?allow_offline=1"
+        if width:
+            params += f"&preview=1&preview_max_width={width}"
+        if height:
+            params += f"&preview_max_height={height}"
+        return await self._request_raw("GET", f"/api/streamer/snapshot{params}")
 
     # --- WebSocket ---
 
