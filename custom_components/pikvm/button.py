@@ -17,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import PikvmDataUpdateCoordinator
-from .entity import PikvmEntity, gpio_display_name
+from .entity import PikvmEntity, detect_kvm_ports, get_kvm_channel_names, gpio_display_name
 
 
 @dataclass(frozen=True)
@@ -63,12 +63,14 @@ async def async_setup_entry(
         PikvmButton(coordinator, entry, desc) for desc in BUTTONS
     ]
 
-    # Add GPIO output channels with pulse config as buttons
+    # Add GPIO output channels with pulse config as buttons (skip internal and KVM channels)
     gpio_model = coordinator.data.get("gpio_model", {}) if coordinator.data else {}
+    gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+    kvm_channels = get_kvm_channel_names(detect_kvm_ports(gpio_model, gpio_labels))
+
     for channel_name, config in gpio_model.get("outputs", {}).items():
-        if channel_name.startswith("__"):
+        if channel_name.startswith("__") or channel_name in kvm_channels:
             continue
-        # Channels with pulse config but not switch become buttons
         if config.get("pulse") and not config.get("switch", False):
             delay = config["pulse"].get("delay", 0)
             entities.append(

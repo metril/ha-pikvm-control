@@ -18,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import PikvmDataUpdateCoordinator
-from .entity import PikvmEntity, gpio_display_name
+from .entity import PikvmEntity, detect_kvm_ports, get_kvm_channel_names, gpio_display_name
 
 
 @dataclass(frozen=True)
@@ -78,11 +78,15 @@ async def async_setup_entry(
         PikvmBinarySensor(coordinator, entry, desc) for desc in BINARY_SENSORS
     ]
 
-    # Add GPIO input channels as binary sensors (skip internal channels)
+    # Add GPIO input channels as binary sensors (skip internal and KVM channels)
     gpio_model = coordinator.data.get("gpio_model", {}) if coordinator.data else {}
+    gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+    kvm_channels = get_kvm_channel_names(detect_kvm_ports(gpio_model, gpio_labels))
+
     for channel_name in gpio_model.get("inputs", {}):
-        if not channel_name.startswith("__"):
-            entities.append(PikvmGpioInputSensor(coordinator, entry, channel_name))
+        if channel_name.startswith("__") or channel_name in kvm_channels:
+            continue
+        entities.append(PikvmGpioInputSensor(coordinator, entry, channel_name))
 
     async_add_entities(entities)
 
