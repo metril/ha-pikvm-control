@@ -16,6 +16,14 @@ import re
 
 from .api import PikvmApiClient
 from .const import DOMAIN
+
+
+def _gpio_display_name(channel_name: str, labels: dict[str, str]) -> str:
+    """Get display name for a GPIO channel."""
+    if channel_name in labels:
+        return labels[channel_name]
+    name = re.sub(r"^ch\d+_", "", channel_name)
+    return name.replace("_", " ").title()
 from .coordinator import PikvmDataUpdateCoordinator
 from .entity import PikvmEntity
 
@@ -130,9 +138,8 @@ class PikvmGpioSwitch(PikvmEntity, SwitchEntity):
         super().__init__(coordinator, entry)
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_gpio_out_{channel_name}"
-        # Clean up channel name: strip chN_ prefix, title case
-        clean = re.sub(r"^ch\d+_", "", channel_name).replace("_", " ").title()
-        self._attr_name = f"GPIO {clean}"
+        gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+        self._attr_name = _gpio_display_name(channel_name, gpio_labels)
         self._attr_icon = "mdi:electric-switch"
 
     @property

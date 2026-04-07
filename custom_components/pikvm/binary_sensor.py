@@ -21,15 +21,16 @@ from .coordinator import PikvmDataUpdateCoordinator
 from .entity import PikvmEntity
 
 
-def _clean_gpio_name(channel_name: str) -> str:
-    """Clean up GPIO channel name for display.
+def _gpio_display_name(channel_name: str, labels: dict[str, str]) -> str:
+    """Get display name for a GPIO channel.
 
-    Converts raw names like 'ch0_led' to 'LED', 'server1_power' to 'Server1 Power'.
+    Uses the human-readable label from PiKVM's view.table if available,
+    otherwise falls back to cleaning the raw channel name.
     """
-    # Strip chN_ prefix (e.g., ch0_led → led)
+    if channel_name in labels:
+        return labels[channel_name]
     import re
     name = re.sub(r"^ch\d+_", "", channel_name)
-    # Replace underscores with spaces and title-case
     return name.replace("_", " ").title()
 
 
@@ -136,7 +137,8 @@ class PikvmGpioInputSensor(PikvmEntity, BinarySensorEntity):
         super().__init__(coordinator, entry)
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_gpio_in_{channel_name}"
-        self._attr_name = f"GPIO {_clean_gpio_name(channel_name)}"
+        gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+        self._attr_name = _gpio_display_name(channel_name, gpio_labels)
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property

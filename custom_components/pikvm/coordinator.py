@@ -50,6 +50,7 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "msd": {},
             "gpio": {"inputs": {}, "outputs": {}},
             "gpio_model": {"inputs": {}, "outputs": {}},
+            "gpio_labels": {},
         }
 
     async def async_start(self) -> None:
@@ -212,17 +213,37 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _process_gpio_full(self, event: dict[str, Any]) -> None:
         """Process full GPIO response (from HTTP GET /api/gpio)."""
-        model = event.get("model", {}).get("scheme", {})
+        model = event.get("model", {})
+        scheme = model.get("scheme", {})
         state = event.get("state", {})
 
         self._state["gpio_model"] = {
-            "inputs": model.get("inputs", {}),
-            "outputs": model.get("outputs", {}),
+            "inputs": scheme.get("inputs", {}),
+            "outputs": scheme.get("outputs", {}),
         }
         self._state["gpio"] = {
             "inputs": state.get("inputs", {}),
             "outputs": state.get("outputs", {}),
         }
+
+        # Parse view.table for human-readable channel labels
+        labels: dict[str, str] = {}
+        table = model.get("view", {}).get("table", [])
+        for row in table:
+            if not isinstance(row, list):
+                continue
+            label_text = None
+            channel_name = None
+            for cell in row:
+                if not isinstance(cell, dict):
+                    continue
+                if cell.get("type") == "label" and "text" in cell:
+                    label_text = cell["text"]
+                elif cell.get("type") in ("input", "output") and "channel" in cell:
+                    channel_name = cell["channel"]
+            if label_text and channel_name:
+                labels[channel_name] = label_text
+        self._state["gpio_labels"] = labels
 
     def _process_gpio_state_event(self, event: dict[str, Any]) -> None:
         """Process GPIO state update from WebSocket."""

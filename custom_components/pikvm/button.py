@@ -6,6 +6,14 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+
+def _gpio_display_name(channel_name: str, labels: dict[str, str]) -> str:
+    """Get display name for a GPIO channel."""
+    if channel_name in labels:
+        return labels[channel_name]
+    name = re.sub(r"^ch\d+_", "", channel_name)
+    return name.replace("_", " ").title()
+
 from homeassistant.components.button import (
     ButtonDeviceClass,
     ButtonEntity,
@@ -122,8 +130,8 @@ class PikvmGpioPulseButton(PikvmEntity, ButtonEntity):
         self._channel_name = channel_name
         self._delay = delay
         self._attr_unique_id = f"{entry.entry_id}_gpio_pulse_{channel_name}"
-        clean = re.sub(r"^ch\d+_", "", channel_name).replace("_", " ").title()
-        self._attr_name = f"GPIO {clean}"
+        gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+        self._attr_name = _gpio_display_name(channel_name, gpio_labels)
         self._attr_icon = "mdi:gesture-tap-button"
 
     async def async_press(self) -> None:
