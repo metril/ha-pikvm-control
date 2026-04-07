@@ -29,8 +29,8 @@ class PikvmButtonDescription(ButtonEntityDescription):
 
 BUTTONS: tuple[PikvmButtonDescription, ...] = (
     PikvmButtonDescription(
-        key="atx_power",
-        name="ATX Power",
+        key="atx_power_short",
+        name="ATX Power Short",
         device_class=ButtonDeviceClass.RESTART,
         icon="mdi:power",
         button_type="power",

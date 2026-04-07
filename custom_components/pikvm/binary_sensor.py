@@ -21,6 +21,18 @@ from .coordinator import PikvmDataUpdateCoordinator
 from .entity import PikvmEntity
 
 
+def _clean_gpio_name(channel_name: str) -> str:
+    """Clean up GPIO channel name for display.
+
+    Converts raw names like 'ch0_led' to 'LED', 'server1_power' to 'Server1 Power'.
+    """
+    # Strip chN_ prefix (e.g., ch0_led → led)
+    import re
+    name = re.sub(r"^ch\d+_", "", channel_name)
+    # Replace underscores with spaces and title-case
+    return name.replace("_", " ").title()
+
+
 @dataclass(frozen=True)
 class PikvmBinarySensorDescription(BinarySensorEntityDescription):
     """Describes a PiKVM binary sensor."""
@@ -78,10 +90,11 @@ async def async_setup_entry(
         PikvmBinarySensor(coordinator, entry, desc) for desc in BINARY_SENSORS
     ]
 
-    # Add GPIO input channels as binary sensors
+    # Add GPIO input channels as binary sensors (skip internal channels)
     gpio_model = coordinator.data.get("gpio_model", {}) if coordinator.data else {}
     for channel_name in gpio_model.get("inputs", {}):
-        entities.append(PikvmGpioInputSensor(coordinator, entry, channel_name))
+        if not channel_name.startswith("__"):
+            entities.append(PikvmGpioInputSensor(coordinator, entry, channel_name))
 
     async_add_entities(entities)
 
@@ -123,7 +136,7 @@ class PikvmGpioInputSensor(PikvmEntity, BinarySensorEntity):
         super().__init__(coordinator, entry)
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_gpio_in_{channel_name}"
-        self._attr_name = f"GPIO {channel_name}"
+        self._attr_name = f"GPIO {_clean_gpio_name(channel_name)}"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property

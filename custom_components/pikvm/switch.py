@@ -12,6 +12,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+import re
+
 from .api import PikvmApiClient
 from .const import DOMAIN
 from .coordinator import PikvmDataUpdateCoordinator
@@ -38,7 +40,7 @@ SWITCHES: tuple[PikvmSwitchDescription, ...] = (
     ),
     PikvmSwitchDescription(
         key="hid_connected",
-        name="HID Connected",
+        name="USB Keyboard & Mouse",
         icon="mdi:keyboard",
         value_fn=lambda data: data.get("hid", {}).get("connected"),
         turn_on_fn=lambda client: client.set_hid_connected(True),
@@ -68,10 +70,10 @@ async def async_setup_entry(
         PikvmSwitch(coordinator, entry, desc) for desc in SWITCHES
     ]
 
-    # Add GPIO output channels with switch capability
+    # Add GPIO output channels with switch capability (skip internal channels)
     gpio_model = coordinator.data.get("gpio_model", {}) if coordinator.data else {}
     for channel_name, config in gpio_model.get("outputs", {}).items():
-        if config.get("switch", False):
+        if not channel_name.startswith("__") and config.get("switch", False):
             entities.append(PikvmGpioSwitch(coordinator, entry, channel_name))
 
     async_add_entities(entities)
@@ -128,7 +130,9 @@ class PikvmGpioSwitch(PikvmEntity, SwitchEntity):
         super().__init__(coordinator, entry)
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_gpio_out_{channel_name}"
-        self._attr_name = f"GPIO {channel_name}"
+        # Clean up channel name: strip chN_ prefix, title case
+        clean = re.sub(r"^ch\d+_", "", channel_name).replace("_", " ").title()
+        self._attr_name = f"GPIO {clean}"
         self._attr_icon = "mdi:electric-switch"
 
     @property
