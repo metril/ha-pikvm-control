@@ -227,30 +227,35 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         # Parse view.table for human-readable channel labels
+        # Each row can have a label + multiple channels (input and output)
+        # All channels in the same row share the same label
         labels: dict[str, str] = {}
         table = model.get("view", {}).get("table", [])
         for row in table:
             if not isinstance(row, list):
                 continue
             label_text = None
-            channel_name = None
+            channel_names: list[str] = []
             for cell in row:
                 if not isinstance(cell, dict):
                     continue
                 if cell.get("type") == "label" and "text" in cell:
                     label_text = cell["text"]
                 elif cell.get("type") in ("input", "output") and "channel" in cell:
-                    channel_name = cell["channel"]
-            if label_text and channel_name:
-                labels[channel_name] = label_text
+                    channel_names.append(cell["channel"])
+            if label_text:
+                for ch in channel_names:
+                    labels[ch] = label_text
         self._state["gpio_labels"] = labels
 
     def _process_gpio_state_event(self, event: dict[str, Any]) -> None:
         """Process GPIO state update from WebSocket."""
         if "inputs" in event:
             self._state["gpio"]["inputs"].update(event["inputs"])
+            _LOGGER.debug("GPIO inputs updated: %s", event["inputs"])
         if "outputs" in event:
             self._state["gpio"]["outputs"].update(event["outputs"])
+            _LOGGER.debug("GPIO outputs updated: %s", event["outputs"])
 
     def _process_gpio_model_event(self, event: dict[str, Any]) -> None:
         """Process GPIO model update from WebSocket."""
