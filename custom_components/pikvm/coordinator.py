@@ -194,12 +194,20 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
     def _process_hid_event(self, event: dict[str, Any]) -> None:
-        """Process HID state."""
-        jiggler = event.get("jiggler", {})
-        self._state["hid"] = {
-            "connected": event.get("connected", False),
-            "jiggler": jiggler.get("enabled", False) if isinstance(jiggler, dict) else bool(jiggler),
-        }
+        """Process HID state (merges partial WebSocket updates)."""
+        current = self._state.get("hid", {"connected": False, "jiggler": False})
+
+        if "connected" in event:
+            current["connected"] = event["connected"]
+
+        if "jiggler" in event:
+            jiggler = event["jiggler"]
+            if isinstance(jiggler, dict):
+                current["jiggler"] = jiggler.get("enabled", current.get("jiggler", False))
+            else:
+                current["jiggler"] = bool(jiggler)
+
+        self._state["hid"] = current
 
     def _process_msd_event(self, event: dict[str, Any]) -> None:
         """Process MSD state."""

@@ -101,6 +101,7 @@ class PikvmSwitch(PikvmEntity, SwitchEntity):
             await self.entity_description.turn_on_fn(self.coordinator.client)
         except Exception as err:
             raise HomeAssistantError(str(err)) from err
+        self._optimistic_update(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off."""
@@ -108,6 +109,22 @@ class PikvmSwitch(PikvmEntity, SwitchEntity):
             await self.entity_description.turn_off_fn(self.coordinator.client)
         except Exception as err:
             raise HomeAssistantError(str(err)) from err
+        self._optimistic_update(False)
+
+    def _optimistic_update(self, state: bool) -> None:
+        """Optimistically update coordinator state after successful API call.
+
+        Needed because the WebSocket may not push back all state changes
+        (e.g., jiggler state is not included in hid_state WS events).
+        """
+        if self.coordinator.data is None:
+            return
+        key = self.entity_description.key
+        if key == "hid_jiggler":
+            self.coordinator.data.setdefault("hid", {})["jiggler"] = state
+        elif key == "hid_connected":
+            self.coordinator.data.setdefault("hid", {})["connected"] = state
+        self.coordinator.async_set_updated_data(self.coordinator.data)
 
 
 class PikvmGpioSwitch(PikvmEntity, SwitchEntity):

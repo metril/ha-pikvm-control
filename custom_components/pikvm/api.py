@@ -175,7 +175,7 @@ class PikvmApiClient:
 
     async def set_hid_jiggler(self, enabled: bool) -> None:
         """Enable or disable HID jiggler."""
-        value = "true" if enabled else "false"
+        value = "1" if enabled else "0"
         await self._request("POST", f"/api/hid/set_params?jiggler={value}")
 
     async def set_hid_connected(self, connected: bool) -> None:
