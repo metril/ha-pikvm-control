@@ -65,6 +65,7 @@ class PikvmApiClient:
     ) -> dict[str, Any]:
         """Make an authenticated HTTP request to PiKVM."""
         url = f"{self._url}{path}"
+        _LOGGER.debug("PiKVM API: %s %s", method, path)
         try:
             async with self._session.request(
                 method,
@@ -74,6 +75,7 @@ class PikvmApiClient:
                 timeout=aiohttp.ClientTimeout(total=10),
                 **kwargs,
             ) as resp:
+                _LOGGER.debug("PiKVM API response: %s %s -> HTTP %d", method, path, resp.status)
                 if resp.status in (401, 403):
                     raise PikvmAuthError(
                         f"Authentication failed (HTTP {resp.status})"
@@ -83,7 +85,16 @@ class PikvmApiClient:
                     raise PikvmApiError(
                         f"API error: HTTP {resp.status}: {text}"
                     )
-                return await resp.json()
+                data = await resp.json()
+                # Check PiKVM's ok field — API returns 200 but ok:false on errors
+                if not data.get("ok", True):
+                    error_msg = data.get("result", {}).get("error_msg", "Unknown error")
+                    error_type = data.get("result", {}).get("error", "")
+                    _LOGGER.error("PiKVM API error on %s: %s (%s)", path, error_msg, error_type)
+                    raise PikvmApiError(f"PiKVM error: {error_msg}")
+                return data
+        except (PikvmAuthError, PikvmApiError, PikvmConnectionError):
+            raise
         except aiohttp.ClientConnectorError as err:
             raise PikvmConnectionError(
                 f"Failed to connect to PiKVM: {err}"

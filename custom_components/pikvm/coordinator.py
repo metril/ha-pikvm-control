@@ -137,6 +137,7 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Process a WebSocket message and update state."""
         event_type = data.get("event_type", "")
         event = data.get("event", {})
+        _LOGGER.debug("PiKVM WS event: %s", event_type)
 
         updated = False
 
