@@ -166,33 +166,55 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.async_set_updated_data(dict(self._state))
 
     def _process_atx_event(self, event: dict[str, Any]) -> None:
-        """Process ATX state."""
-        self._state["atx"] = {
-            "busy": event.get("busy", False),
-            "enabled": event.get("enabled", True),
-            "leds": {
-                "power": event.get("leds", {}).get("power", False),
-                "hdd": event.get("leds", {}).get("hdd", False),
-            },
-        }
+        """Process ATX state (merges partial updates)."""
+        current = self._state.get("atx", {})
+
+        if "busy" in event:
+            current["busy"] = event["busy"]
+        if "enabled" in event:
+            current["enabled"] = event["enabled"]
+        if "leds" in event:
+            current_leds = current.get("leds", {})
+            leds = event["leds"]
+            if "power" in leds:
+                current_leds["power"] = leds["power"]
+            if "hdd" in leds:
+                current_leds["hdd"] = leds["hdd"]
+            current["leds"] = current_leds
+
+        self._state["atx"] = current
 
     def _process_hw_event(self, event: dict[str, Any]) -> None:
-        """Process hardware info state."""
+        """Process hardware info state (merges partial updates)."""
         hw = event.get("hw", event)
         health = hw.get("health", {})
+        current = self._state.get("system", {})
+
+        temp = health.get("temp", {})
+        if "cpu" in temp:
+            current["cpu_temp"] = temp["cpu"]
+
+        cpu = health.get("cpu", {})
+        if "percent" in cpu:
+            current["cpu_percent"] = cpu["percent"]
+
+        mem = health.get("mem", {})
+        if "percent" in mem:
+            current["mem_percent"] = mem["percent"]
+
         throttling = health.get("throttling", {})
         parsed = throttling.get("parsed_flags", {})
+        if parsed:
+            current_throttling = current.get("throttling", {})
+            if "undervoltage" in parsed:
+                current_throttling["undervoltage"] = parsed["undervoltage"].get("now", False)
+            if "freq_capped" in parsed:
+                current_throttling["freq_capped"] = parsed["freq_capped"].get("now", False)
+            if "throttled" in parsed:
+                current_throttling["throttled"] = parsed["throttled"].get("now", False)
+            current["throttling"] = current_throttling
 
-        self._state["system"] = {
-            "cpu_temp": health.get("temp", {}).get("cpu"),
-            "cpu_percent": health.get("cpu", {}).get("percent"),
-            "mem_percent": health.get("mem", {}).get("percent"),
-            "throttling": {
-                "undervoltage": parsed.get("undervoltage", {}).get("now", False),
-                "freq_capped": parsed.get("freq_capped", {}).get("now", False),
-                "throttled": parsed.get("throttled", {}).get("now", False),
-            },
-        }
+        self._state["system"] = current
 
     def _process_hid_event(self, event: dict[str, Any]) -> None:
         """Process HID state (merges partial WebSocket updates)."""
@@ -211,19 +233,27 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._state["hid"] = current
 
     def _process_msd_event(self, event: dict[str, Any]) -> None:
-        """Process MSD state."""
-        drive = event.get("drive", event)
-        storage = event.get("storage", {})
-        images = list(storage.get("images", {}).keys()) if storage else self._state.get("msd", {}).get("images", [])
+        """Process MSD state (merges partial updates)."""
+        current = self._state.get("msd", {})
 
-        self._state["msd"] = {
-            "connected": drive.get("connected", False),
-            "image": drive.get("image"),
-            "cdrom": drive.get("cdrom", False),
-            "rw": drive.get("rw", False),
-            "enabled": event.get("enabled", True),
-            "images": images,
-        }
+        drive = event.get("drive", {})
+        if "connected" in drive:
+            current["connected"] = drive["connected"]
+        if "image" in drive:
+            current["image"] = drive["image"]
+        if "cdrom" in drive:
+            current["cdrom"] = drive["cdrom"]
+        if "rw" in drive:
+            current["rw"] = drive["rw"]
+
+        if "enabled" in event:
+            current["enabled"] = event["enabled"]
+
+        storage = event.get("storage", {})
+        if "images" in storage:
+            current["images"] = list(storage["images"].keys())
+
+        self._state["msd"] = current
 
     def _process_gpio_full(self, event: dict[str, Any]) -> None:
         """Process full GPIO response (from HTTP GET /api/gpio)."""
