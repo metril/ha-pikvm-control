@@ -175,13 +175,17 @@ class PikvmApiClient:
 
     async def set_hid_jiggler(self, enabled: bool) -> None:
         """Enable or disable HID jiggler."""
-        value = "1" if enabled else "0"
+        value = "true" if enabled else "false"
         await self._request("POST", f"/api/hid/set_params?jiggler={value}")
 
     async def set_hid_connected(self, connected: bool) -> None:
         """Connect or disconnect HID."""
         value = "1" if connected else "0"
         await self._request("POST", f"/api/hid/set_connected?connected={value}")
+
+    async def reset_hid(self) -> None:
+        """Reset HID to default state."""
+        await self._request("POST", "/api/hid/reset")
 
     async def send_shortcut(self, keys: str) -> None:
         """Send a keyboard shortcut (comma-separated key names)."""
