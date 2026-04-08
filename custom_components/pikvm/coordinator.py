@@ -141,22 +141,22 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         updated = False
 
-        if event_type == "atx_state":
+        if event_type in ("atx_state", "atx"):
             self._process_atx_event(event)
             updated = True
-        elif event_type == "info_hw_state":
+        elif event_type in ("info_hw_state", "info"):
             self._process_hw_event({"hw": event} if "hw" not in event else event)
             updated = True
-        elif event_type == "hid_state":
+        elif event_type in ("hid_state", "hid"):
             self._process_hid_event(event)
             updated = True
-        elif event_type == "msd_state":
+        elif event_type in ("msd_state", "msd"):
             self._process_msd_event(event)
             updated = True
-        elif event_type == "gpio_state":
+        elif event_type in ("gpio_state", "gpio"):
             self._process_gpio_state_event(event)
             updated = True
-        elif event_type == "gpio_model_state":
+        elif event_type in ("gpio_model_state", "gpio_model"):
             self._process_gpio_model_event(event)
             updated = True
         elif event_type == "loop":
