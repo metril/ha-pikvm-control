@@ -269,6 +269,8 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if "outputs" in event:
             self._state["gpio"]["outputs"].update(event["outputs"])
             _LOGGER.debug("GPIO outputs updated: %s", event["outputs"])
+        if not event.get("inputs") and not event.get("outputs"):
+            _LOGGER.debug("GPIO state event with unexpected structure: %s", event)
 
     def _process_gpio_model_event(self, event: dict[str, Any]) -> None:
         """Process GPIO model update from WebSocket."""

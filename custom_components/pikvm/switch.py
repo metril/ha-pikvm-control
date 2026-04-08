@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Coroutine
+
+_LOGGER = logging.getLogger(__name__)
 from dataclasses import dataclass
 from typing import Any
 
@@ -268,14 +271,20 @@ class PikvmUsbConnectionSwitch(PikvmEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Connect USB to the server."""
+        _LOGGER.debug("USB Connection: turning ON (channel=%s)", self._channel_name)
         try:
             await self.coordinator.client.gpio_switch(self._channel_name, True)
         except Exception as err:
             raise HomeAssistantError(str(err)) from err
+        _LOGGER.debug("USB Connection: API call succeeded, current state in coordinator: %s",
+                       self.coordinator.data.get("gpio", {}).get("outputs", {}).get(self._channel_name))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disconnect USB from the server."""
+        _LOGGER.debug("USB Connection: turning OFF (channel=%s)", self._channel_name)
         try:
             await self.coordinator.client.gpio_switch(self._channel_name, False)
         except Exception as err:
             raise HomeAssistantError(str(err)) from err
+        _LOGGER.debug("USB Connection: API call succeeded, current state in coordinator: %s",
+                       self.coordinator.data.get("gpio", {}).get("outputs", {}).get(self._channel_name))
