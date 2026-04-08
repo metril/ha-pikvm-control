@@ -202,6 +202,20 @@ class PikvmApiClient:
         value = "1" if connected else "0"
         await self._request("POST", f"/api/msd/set_connected?connected={value}")
 
+    async def set_msd_params(
+        self, image: str, cdrom: bool = True, rw: bool = False
+    ) -> None:
+        """Set MSD parameters (image, cdrom mode, rw mode).
+
+        MSD must be disconnected before calling this.
+        """
+        cdrom_val = "1" if cdrom else "0"
+        rw_val = "1" if rw else "0"
+        await self._request(
+            "POST",
+            f"/api/msd/set_params?image={image}&cdrom={cdrom_val}&rw={rw_val}",
+        )
+
     # --- GPIO actions ---
 
     async def gpio_switch(self, channel: str, state: bool) -> None:

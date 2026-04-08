@@ -204,11 +204,16 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _process_msd_event(self, event: dict[str, Any]) -> None:
         """Process MSD state."""
         drive = event.get("drive", event)
+        storage = event.get("storage", {})
+        images = list(storage.get("images", {}).keys()) if storage else self._state.get("msd", {}).get("images", [])
+
         self._state["msd"] = {
             "connected": drive.get("connected", False),
             "image": drive.get("image"),
             "cdrom": drive.get("cdrom", False),
             "rw": drive.get("rw", False),
+            "enabled": event.get("enabled", True),
+            "images": images,
         }
 
     def _process_gpio_full(self, event: dict[str, Any]) -> None:

@@ -44,14 +44,6 @@ SWITCHES: tuple[PikvmSwitchDescription, ...] = (
         turn_on_fn=lambda client: client.set_hid_connected(True),
         turn_off_fn=lambda client: client.set_hid_connected(False),
     ),
-    PikvmSwitchDescription(
-        key="msd_connected",
-        name="MSD Connected",
-        icon="mdi:usb-flash-drive",
-        value_fn=lambda data: data.get("msd", {}).get("connected"),
-        turn_on_fn=lambda client: client.set_msd_connected(True),
-        turn_off_fn=lambda client: client.set_msd_connected(False),
-    ),
 )
 
 
@@ -68,7 +60,10 @@ async def async_setup_entry(
         PikvmSwitch(coordinator, entry, desc) for desc in SWITCHES
     ]
 
-    # Add GPIO output channels with switch capability (skip internal channels)
+    # MSD connected switch
+    entities.append(PikvmMsdSwitch(coordinator, entry))
+
+    # Add GPIO output channels with switch capability (skip internal and KVM channels)
     gpio_model = coordinator.data.get("gpio_model", {}) if coordinator.data else {}
     for channel_name, config in gpio_model.get("outputs", {}).items():
         if not channel_name.startswith("__") and config.get("switch", False):
@@ -161,5 +156,55 @@ class PikvmGpioSwitch(PikvmEntity, SwitchEntity):
         """Turn off GPIO channel."""
         try:
             await self.coordinator.client.gpio_switch(self._channel_name, False)
+        except Exception as err:
+            raise HomeAssistantError(str(err)) from err
+
+
+class PikvmMsdSwitch(PikvmEntity, SwitchEntity):
+    """Switch to connect/disconnect MSD from the server."""
+
+    _attr_name = "MSD Connected"
+    _attr_icon = "mdi:usb-flash-drive"
+
+    def __init__(
+        self,
+        coordinator: PikvmDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialize the MSD switch."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_msd_connected"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the MSD connection state."""
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get("msd", {}).get("connected")
+
+    @property
+    def available(self) -> bool:
+        """MSD switch is unavailable when no image is selected."""
+        if self.coordinator.data is None:
+            return False
+        msd = self.coordinator.data.get("msd", {})
+        return bool(msd.get("image")) and super().available
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Connect MSD to the server."""
+        msd = self.coordinator.data.get("msd", {}) if self.coordinator.data else {}
+        if not msd.get("image"):
+            raise HomeAssistantError(
+                "Select an image first using the MSD Image selector"
+            )
+        try:
+            await self.coordinator.client.set_msd_connected(True)
+        except Exception as err:
+            raise HomeAssistantError(str(err)) from err
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disconnect MSD from the server."""
+        try:
+            await self.coordinator.client.set_msd_connected(False)
         except Exception as err:
             raise HomeAssistantError(str(err)) from err
