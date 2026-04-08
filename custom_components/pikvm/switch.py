@@ -15,7 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .api import PikvmApiClient
 from .const import DOMAIN
 from .coordinator import PikvmDataUpdateCoordinator
-from .entity import PikvmEntity, gpio_display_name
+from .entity import PikvmEntity, detect_kvm_ports, get_kvm_channel_names, gpio_display_name
 
 
 @dataclass(frozen=True)
@@ -36,14 +36,6 @@ SWITCHES: tuple[PikvmSwitchDescription, ...] = (
         turn_on_fn=lambda client: client.set_hid_jiggler(True),
         turn_off_fn=lambda client: client.set_hid_jiggler(False),
     ),
-    PikvmSwitchDescription(
-        key="hid_connected",
-        name="USB Keyboard & Mouse",
-        icon="mdi:keyboard",
-        value_fn=lambda data: data.get("hid", {}).get("connected"),
-        turn_on_fn=lambda client: client.set_hid_connected(True),
-        turn_off_fn=lambda client: client.set_hid_connected(False),
-    ),
 )
 
 
@@ -63,10 +55,20 @@ async def async_setup_entry(
     # MSD connected switch
     entities.append(PikvmMsdSwitch(coordinator, entry))
 
-    # Add GPIO output channels with switch capability (skip internal and KVM channels)
+    # Add GPIO output channels with switch capability (skip KVM channels)
     gpio_model = coordinator.data.get("gpio_model", {}) if coordinator.data else {}
+    gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+    kvm_channels = get_kvm_channel_names(detect_kvm_ports(gpio_model, gpio_labels))
+
     for channel_name, config in gpio_model.get("outputs", {}).items():
-        if not channel_name.startswith("__") and config.get("switch", False):
+        if channel_name in kvm_channels:
+            continue
+        if not config.get("switch", False):
+            continue
+
+        if "usb_breaker" in channel_name:
+            entities.append(PikvmUsbConnectionSwitch(coordinator, entry, channel_name))
+        elif not channel_name.startswith("__"):
             entities.append(PikvmGpioSwitch(coordinator, entry, channel_name))
 
     async_add_entities(entities)
@@ -122,8 +124,6 @@ class PikvmSwitch(PikvmEntity, SwitchEntity):
         key = self.entity_description.key
         if key == "hid_jiggler":
             self.coordinator.data.setdefault("hid", {})["jiggler"] = state
-        elif key == "hid_connected":
-            self.coordinator.data.setdefault("hid", {})["connected"] = state
         self.coordinator.async_set_updated_data(self.coordinator.data)
 
 
@@ -223,5 +223,59 @@ class PikvmMsdSwitch(PikvmEntity, SwitchEntity):
         """Disconnect MSD from the server."""
         try:
             await self.coordinator.client.set_msd_connected(False)
+        except Exception as err:
+            raise HomeAssistantError(str(err)) from err
+
+
+class PikvmUsbConnectionSwitch(PikvmEntity, SwitchEntity):
+    """Switch to connect/disconnect main USB to the server.
+
+    Maps to the __v3_usb_breaker__ (or similar) GPIO channel.
+    This is the "Connect main USB to server" toggle in the PiKVM web UI.
+    """
+
+    _attr_name = "USB Connection"
+    _attr_icon = "mdi:usb"
+
+    def __init__(
+        self,
+        coordinator: PikvmDataUpdateCoordinator,
+        entry: ConfigEntry,
+        channel_name: str,
+    ) -> None:
+        """Initialize the USB connection switch."""
+        super().__init__(coordinator, entry)
+        self._channel_name = channel_name
+        self._attr_unique_id = f"{entry.entry_id}_usb_connection"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True when USB is connected to server."""
+        if self.coordinator.data is None:
+            return None
+        outputs = self.coordinator.data.get("gpio", {}).get("outputs", {})
+        channel = outputs.get(self._channel_name, {})
+        return channel.get("state")
+
+    @property
+    def available(self) -> bool:
+        """Return if the USB breaker channel is online."""
+        if self.coordinator.data is None:
+            return False
+        outputs = self.coordinator.data.get("gpio", {}).get("outputs", {})
+        channel = outputs.get(self._channel_name, {})
+        return channel.get("online", False) and super().available
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Connect USB to the server."""
+        try:
+            await self.coordinator.client.gpio_switch(self._channel_name, True)
+        except Exception as err:
+            raise HomeAssistantError(str(err)) from err
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disconnect USB from the server."""
+        try:
+            await self.coordinator.client.gpio_switch(self._channel_name, False)
         except Exception as err:
             raise HomeAssistantError(str(err)) from err
