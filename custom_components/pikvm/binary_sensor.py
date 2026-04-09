@@ -13,10 +13,11 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 
-from .const import DOMAIN
+from .const import CONF_HDD_HOLD_TIME, DEFAULT_HDD_HOLD_TIME, DOMAIN
 from .coordinator import PikvmDataUpdateCoordinator
 from .entity import PikvmEntity, detect_kvm_ports, get_kvm_channel_names, gpio_display_name
 
@@ -74,9 +75,12 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: PikvmDataUpdateCoordinator = data["coordinator"]
 
-    entities: list[BinarySensorEntity] = [
-        PikvmBinarySensor(coordinator, entry, desc) for desc in BINARY_SENSORS
-    ]
+    entities: list[BinarySensorEntity] = []
+    for desc in BINARY_SENSORS:
+        if desc.key == "hdd_activity":
+            entities.append(PikvmHddActivityBinarySensor(coordinator, entry, desc))
+        else:
+            entities.append(PikvmBinarySensor(coordinator, entry, desc))
 
     # Add GPIO input channels as binary sensors (skip internal and KVM channels)
     gpio_model = coordinator.data.get("gpio_model", {}) if coordinator.data else {}
@@ -113,6 +117,65 @@ class PikvmBinarySensor(PikvmEntity, BinarySensorEntity):
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
+
+
+class PikvmHddActivityBinarySensor(PikvmBinarySensor):
+    """HDD activity sensor with hold timer to smooth rapid flickering."""
+
+    def __init__(
+        self,
+        coordinator: PikvmDataUpdateCoordinator,
+        entry: ConfigEntry,
+        description: PikvmBinarySensorDescription,
+    ) -> None:
+        """Initialize the HDD activity sensor."""
+        super().__init__(coordinator, entry, description)
+        self._hold_timer: CALLBACK_TYPE | None = None
+        self._entry = entry
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the held sensor state."""
+        return self._attr_is_on
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator data update with hold timer logic."""
+        if self.coordinator.data is None:
+            self._cancel_timer()
+            self._attr_is_on = None
+            self.async_write_ha_state()
+            return
+
+        raw_value = self.entity_description.value_fn(self.coordinator.data)
+
+        if raw_value:
+            self._attr_is_on = True
+            self._cancel_timer()
+            hold_time = self._entry.options.get(
+                CONF_HDD_HOLD_TIME, DEFAULT_HDD_HOLD_TIME
+            )
+            self._hold_timer = async_call_later(
+                self.hass, hold_time, self._timer_expired
+            )
+            self.async_write_ha_state()
+        # If raw_value is False/None, do nothing — the timer will handle OFF
+
+    def _timer_expired(self, _now: Any) -> None:
+        """Handle hold timer expiration."""
+        self._hold_timer = None
+        self._attr_is_on = False
+        self.async_write_ha_state()
+
+    def _cancel_timer(self) -> None:
+        """Cancel any active hold timer."""
+        if self._hold_timer is not None:
+            self._hold_timer()
+            self._hold_timer = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel timer on entity removal."""
+        self._cancel_timer()
+        await super().async_will_remove_from_hass()
 
 
 class PikvmGpioInputSensor(PikvmEntity, BinarySensorEntity):

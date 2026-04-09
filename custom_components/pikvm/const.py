@@ -9,5 +9,12 @@ CONF_PIKVM_PASS = "password"
 CONF_PIKVM_TOTP_SECRET = "totp_secret"
 CONF_VERIFY_SSL = "verify_ssl"
 
-# Reconnect delay for WebSocket
-WS_RECONNECT_DELAY = 5  # seconds
+# Options flow keys and defaults
+CONF_HDD_HOLD_TIME = "hdd_hold_time"
+DEFAULT_HDD_HOLD_TIME = 5  # seconds
+
+CONF_WS_RECONNECT_DELAY = "ws_reconnect_delay"
+DEFAULT_WS_RECONNECT_DELAY = 5  # seconds
+
+CONF_HTTP_TIMEOUT = "http_timeout"
+DEFAULT_HTTP_TIMEOUT = 10  # seconds

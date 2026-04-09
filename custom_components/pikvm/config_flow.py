@@ -7,16 +7,32 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithConfigEntry,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
 
 from .api import PikvmApiClient, PikvmAuthError, PikvmConnectionError
 from .const import (
+    CONF_HDD_HOLD_TIME,
+    CONF_HTTP_TIMEOUT,
     CONF_PIKVM_PASS,
     CONF_PIKVM_TOTP_SECRET,
     CONF_PIKVM_URL,
     CONF_PIKVM_USER,
     CONF_VERIFY_SSL,
+    CONF_WS_RECONNECT_DELAY,
+    DEFAULT_HDD_HOLD_TIME,
+    DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_WS_RECONNECT_DELAY,
     DOMAIN,
 )
 
@@ -37,6 +53,13 @@ class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for PiKVM Control."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: ConfigEntry,
+    ) -> PikvmOptionsFlowHandler:
+        """Get the options flow handler."""
+        return PikvmOptionsFlowHandler(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -155,3 +178,47 @@ class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("Unexpected error during PiKVM connection test")
             return "unknown"
         return None
+
+
+class PikvmOptionsFlowHandler(OptionsFlowWithConfigEntry):
+    """Handle PiKVM options."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        options = self.config_entry.options
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_HDD_HOLD_TIME,
+                        default=options.get(CONF_HDD_HOLD_TIME, DEFAULT_HDD_HOLD_TIME),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1, max=30, step=1, mode=NumberSelectorMode.SLIDER
+                        )
+                    ),
+                    vol.Required(
+                        CONF_WS_RECONNECT_DELAY,
+                        default=options.get(CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1, max=30, step=1, mode=NumberSelectorMode.SLIDER
+                        )
+                    ),
+                    vol.Required(
+                        CONF_HTTP_TIMEOUT,
+                        default=options.get(CONF_HTTP_TIMEOUT, DEFAULT_HTTP_TIMEOUT),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=5, max=60, step=1, mode=NumberSelectorMode.SLIDER
+                        )
+                    ),
+                }
+            ),
+        )

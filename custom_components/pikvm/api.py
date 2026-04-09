@@ -34,6 +34,7 @@ class PikvmApiClient:
         password: str,
         totp_secret: str,
         verify_ssl: bool = False,
+        http_timeout: int = 10,
     ) -> None:
         """Initialize the PiKVM API client."""
         self._session = session
@@ -42,6 +43,7 @@ class PikvmApiClient:
         self._password = password
         self._totp_secret = totp_secret
         self._verify_ssl = verify_ssl
+        self._http_timeout = http_timeout
         self._totp = pyotp.TOTP(totp_secret)
 
     def _auth(self) -> aiohttp.BasicAuth:
@@ -72,7 +74,7 @@ class PikvmApiClient:
                 url,
                 auth=self._auth(),
                 ssl=self._verify_ssl if not self._verify_ssl else None,
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=self._http_timeout),
                 **kwargs,
             ) as resp:
                 _LOGGER.debug("PiKVM API response: %s %s -> HTTP %d", method, path, resp.status)
@@ -118,7 +120,7 @@ class PikvmApiClient:
                 url,
                 auth=self._auth(),
                 ssl=self._verify_ssl if not self._verify_ssl else None,
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=self._http_timeout),
                 **kwargs,
             ) as resp:
                 if resp.status in (401, 403):

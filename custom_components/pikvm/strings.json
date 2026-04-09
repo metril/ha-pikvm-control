@@ -46,5 +46,22 @@
       "already_configured": "This PiKVM device is already configured",
       "reauth_successful": "Re-authentication was successful"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PiKVM Options",
+        "data": {
+          "hdd_hold_time": "HDD activity hold time (seconds)",
+          "ws_reconnect_delay": "WebSocket reconnect delay (seconds)",
+          "http_timeout": "HTTP request timeout (seconds)"
+        },
+        "data_description": {
+          "hdd_hold_time": "How long the HDD activity sensor stays ON after the last activity pulse. Higher values produce a more stable sensor.",
+          "ws_reconnect_delay": "How long to wait before reconnecting a dropped WebSocket connection.",
+          "http_timeout": "Timeout for API requests. Increase for slow or remote PiKVM devices."
+        }
+      }
+    }
   }
 }

@@ -14,7 +14,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import PikvmApiClient, PikvmAuthError, PikvmConnectionError
-from .const import DOMAIN, WS_RECONNECT_DELAY
+from .const import CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -102,12 +102,15 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.entry.async_start_reauth(self.hass)
                 return  # Stop reconnecting on auth failure
             except (PikvmConnectionError, aiohttp.ClientError, Exception) as err:
+                reconnect_delay = self.entry.options.get(
+                    CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY
+                )
                 _LOGGER.warning(
                     "PiKVM WebSocket disconnected: %s. Reconnecting in %ds",
                     err,
-                    WS_RECONNECT_DELAY,
+                    reconnect_delay,
                 )
-            await asyncio.sleep(WS_RECONNECT_DELAY)
+                await asyncio.sleep(reconnect_delay)
 
     async def _ws_connect_and_listen(self) -> None:
         """Connect to WebSocket and process events."""

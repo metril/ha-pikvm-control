@@ -15,11 +15,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import PikvmApiClient
 from .const import (
+    CONF_HTTP_TIMEOUT,
     CONF_PIKVM_PASS,
     CONF_PIKVM_TOTP_SECRET,
     CONF_PIKVM_URL,
     CONF_PIKVM_USER,
     CONF_VERIFY_SSL,
+    DEFAULT_HTTP_TIMEOUT,
     DOMAIN,
 )
 from .coordinator import PikvmDataUpdateCoordinator
@@ -74,6 +76,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     verify_ssl = entry.data.get(CONF_VERIFY_SSL, False)
     session = async_get_clientsession(hass, verify_ssl=verify_ssl)
 
+    http_timeout = entry.options.get(CONF_HTTP_TIMEOUT, DEFAULT_HTTP_TIMEOUT)
+
     client = PikvmApiClient(
         session=session,
         url=entry.data[CONF_PIKVM_URL],
@@ -81,6 +85,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         password=entry.data[CONF_PIKVM_PASS],
         totp_secret=entry.data[CONF_PIKVM_TOTP_SECRET],
         verify_ssl=verify_ssl,
+        http_timeout=http_timeout,
     )
 
     coordinator = PikvmDataUpdateCoordinator(hass, entry, client)
@@ -95,6 +100,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Start WebSocket connection for real-time updates
     await coordinator.async_start()
+
+    # Reload integration when options change
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     # Register services if not already registered
     if not hass.services.has_service(DOMAIN, SERVICE_SEND_SHORTCUT):
@@ -122,6 +130,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload integration when options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
