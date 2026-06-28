@@ -1,4 +1,12 @@
-# PiKVM Control for Home Assistant
+<p align="center">
+  <img src="custom_components/pikvm/brand/logo.png" alt="PiKVM Control" width="371">
+</p>
+
+<h1 align="center">PiKVM Control for Home Assistant</h1>
+
+<p align="center">
+  <img src="custom_components/pikvm/brand/icon.png" alt="PiKVM Control icon" width="96">
+</p>
 
 A comprehensive Home Assistant custom integration for [PiKVM](https://pikvm.org/) devices. Real-time state updates via WebSocket.
 
