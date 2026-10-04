@@ -34,3 +34,11 @@ type_text:
       required: true
       selector:
         text:
+    keymap:
+      name: Keymap
+      description: The keyboard layout used when typing the text.
+      required: false
+      default: en
+      example: en
+      selector:
+        text:

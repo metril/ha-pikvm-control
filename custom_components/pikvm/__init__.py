@@ -5,15 +5,15 @@ from __future__ import annotations
 import logging
 
 import voluptuous as vol
-
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 
-from .api import PikvmApiClient
+from .api import PikvmApiClient, PikvmApiError, PikvmAuthError, PikvmConnectionError
 from .const import (
     CONF_HTTP_TIMEOUT,
     CONF_PIKVM_PASS,
@@ -24,9 +24,11 @@ from .const import (
     DEFAULT_HTTP_TIMEOUT,
     DOMAIN,
 )
-from .coordinator import PikvmDataUpdateCoordinator
+from .coordinator import PikvmConfigEntry, PikvmDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS = [
     Platform.BINARY_SENSOR,
@@ -51,106 +53,102 @@ SERVICE_TYPE_TEXT_SCHEMA = vol.Schema(
     {
         vol.Required("device_id"): str,
         vol.Required("text"): str,
+        vol.Optional("keymap", default="en"): str,
     }
 )
 
 
-def _get_client_for_device(
-    hass: HomeAssistant, device_id: str
-) -> PikvmApiClient:
+def _get_client_for_device(hass: HomeAssistant, device_id: str) -> PikvmApiClient:
     """Resolve a device_id to its PikvmApiClient."""
     dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get(device_id)
-    if device is None:
-        raise HomeAssistantError(f"Device {device_id} not found")
+    if dev_reg.async_get(device_id) is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="device_not_found",
+            translation_placeholders={"device_id": device_id},
+        )
 
-    for entry_id in device.config_entries:
-        if entry_id in hass.data.get(DOMAIN, {}):
-            return hass.data[DOMAIN][entry_id]["client"]
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        device_ids = {
+            device.id
+            for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id)
+        }
+        if device_id in device_ids:
+            return entry.runtime_data.client
 
-    raise HomeAssistantError(f"No PiKVM integration found for device {device_id}")
+    raise ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key="entry_not_loaded",
+    )
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+def _action_failed(err: Exception) -> HomeAssistantError:
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key="action_failed",
+        translation_placeholders={"error": str(err)},
+    )
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register integration services."""
+
+    async def handle_send_shortcut(call: ServiceCall) -> None:
+        client = _get_client_for_device(hass, call.data["device_id"])
+        try:
+            await client.send_shortcut(call.data["keys"])
+        except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
+            raise _action_failed(err) from err
+
+    async def handle_type_text(call: ServiceCall) -> None:
+        client = _get_client_for_device(hass, call.data["device_id"])
+        try:
+            await client.type_text(call.data["text"], call.data["keymap"])
+        except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
+            raise _action_failed(err) from err
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SEND_SHORTCUT,
+        handle_send_shortcut,
+        schema=SERVICE_SEND_SHORTCUT_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_TYPE_TEXT,
+        handle_type_text,
+        schema=SERVICE_TYPE_TEXT_SCHEMA,
+    )
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: PikvmConfigEntry) -> bool:
     """Set up PiKVM Control from a config entry."""
     verify_ssl = entry.data.get(CONF_VERIFY_SSL, False)
     session = async_get_clientsession(hass, verify_ssl=verify_ssl)
-
-    http_timeout = entry.options.get(CONF_HTTP_TIMEOUT, DEFAULT_HTTP_TIMEOUT)
 
     client = PikvmApiClient(
         session=session,
         url=entry.data[CONF_PIKVM_URL],
         username=entry.data[CONF_PIKVM_USER],
         password=entry.data[CONF_PIKVM_PASS],
-        totp_secret=entry.data[CONF_PIKVM_TOTP_SECRET],
+        totp_secret=entry.data.get(CONF_PIKVM_TOTP_SECRET) or None,
         verify_ssl=verify_ssl,
-        http_timeout=http_timeout,
+        http_timeout=entry.options.get(CONF_HTTP_TIMEOUT, DEFAULT_HTTP_TIMEOUT),
     )
 
     coordinator = PikvmDataUpdateCoordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
-
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "coordinator": coordinator,
-        "client": client,
-    }
+    entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Start WebSocket connection for real-time updates
     await coordinator.async_start()
-
-    # Reload integration when options change
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
-
-    # Register services if not already registered
-    if not hass.services.has_service(DOMAIN, SERVICE_SEND_SHORTCUT):
-        async def handle_send_shortcut(call: ServiceCall) -> None:
-            client = _get_client_for_device(hass, call.data["device_id"])
-            try:
-                await client.send_shortcut(call.data["keys"])
-            except Exception as err:
-                raise HomeAssistantError(str(err)) from err
-
-        async def handle_type_text(call: ServiceCall) -> None:
-            client = _get_client_for_device(hass, call.data["device_id"])
-            try:
-                await client.type_text(call.data["text"])
-            except Exception as err:
-                raise HomeAssistantError(str(err)) from err
-
-        hass.services.async_register(
-            DOMAIN, SERVICE_SEND_SHORTCUT, handle_send_shortcut,
-            schema=SERVICE_SEND_SHORTCUT_SCHEMA,
-        )
-        hass.services.async_register(
-            DOMAIN, SERVICE_TYPE_TEXT, handle_type_text,
-            schema=SERVICE_TYPE_TEXT_SCHEMA,
-        )
-
     return True
 
 
-async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload integration when options change."""
-    await hass.config_entries.async_reload(entry.entry_id)
-
-
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: PikvmConfigEntry) -> bool:
     """Unload a PiKVM Control config entry."""
-    data = hass.data[DOMAIN].get(entry.entry_id)
-    if data:
-        coordinator: PikvmDataUpdateCoordinator = data["coordinator"]
-        await coordinator.async_stop()
-
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
-
-    # Unregister services if no entries left
-    if not hass.data.get(DOMAIN):
-        hass.services.async_remove(DOMAIN, SERVICE_SEND_SHORTCUT)
-        hass.services.async_remove(DOMAIN, SERVICE_TYPE_TEXT)
-
+        await entry.runtime_data.async_stop()
     return unload_ok

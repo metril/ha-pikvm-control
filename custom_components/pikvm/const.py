@@ -18,3 +18,5 @@ DEFAULT_WS_RECONNECT_DELAY = 5  # seconds
 
 CONF_HTTP_TIMEOUT = "http_timeout"
 DEFAULT_HTTP_TIMEOUT = 10  # seconds
+
+MAX_WS_RECONNECT_DELAY = 300  # seconds, cap for exponential backoff

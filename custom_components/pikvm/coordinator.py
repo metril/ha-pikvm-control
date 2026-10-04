@@ -3,20 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
 import aiohttp
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import PikvmApiClient, PikvmAuthError, PikvmConnectionError
-from .const import CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY, DOMAIN
+from .api import PikvmApiClient, PikvmApiError, PikvmAuthError, PikvmConnectionError
+from .const import (
+    CONF_WS_RECONNECT_DELAY,
+    DEFAULT_WS_RECONNECT_DELAY,
+    MAX_WS_RECONNECT_DELAY,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+type PikvmConfigEntry = ConfigEntry[PikvmDataUpdateCoordinator]
 
 
 class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -29,18 +35,19 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(
         self,
         hass: HomeAssistant,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
         client: PikvmApiClient,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"PiKVM {entry.title}",
             # No update_interval — we use WebSocket push, not polling
         )
         self.client = client
-        self.entry = entry
+        self._ws_failures = 0
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_task: asyncio.Task | None = None
         self._state: dict[str, Any] = {
@@ -51,70 +58,98 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "gpio": {"inputs": {}, "outputs": {}},
             "gpio_model": {"inputs": {}, "outputs": {}},
             "gpio_labels": {},
+            "info": {},
         }
 
     async def async_start(self) -> None:
         """Start the WebSocket connection."""
-        self._ws_task = self.hass.async_create_background_task(
-            self._ws_loop(), f"pikvm_ws_{self.entry.entry_id}"
+        self._ws_task = self.config_entry.async_create_background_task(
+            self.hass,
+            self._ws_loop(),
+            name=f"pikvm_ws_{self.config_entry.entry_id}",
+            eager_start=True,
         )
 
     async def async_stop(self) -> None:
         """Stop the WebSocket connection."""
-        if self._ws_task:
-            self._ws_task.cancel()
-            self._ws_task = None
-        if self._ws and not self._ws.closed:
-            await self._ws.close()
-            self._ws = None
+        task, self._ws_task = self._ws_task, None
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        ws, self._ws = self._ws, None
+        if ws and not ws.closed:
+            await ws.close()
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Return current state. Called by HA on first refresh."""
-        # Fetch initial state via HTTP
+        """Fetch initial state via HTTP (state is then pushed via WebSocket)."""
         try:
-            atx, hw_info, hid, msd, gpio = await asyncio.gather(
+            atx, hw_info, hid, msd, gpio, info = await asyncio.gather(
                 self.client.get_atx_state(),
                 self.client.get_system_info(),
                 self.client.get_hid_state(),
                 self.client.get_msd_state(),
                 self.client.get_gpio_state(),
+                self.client.get_info(),
             )
         except PikvmAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
-        except PikvmConnectionError as err:
-            raise Exception(str(err)) from err
+        except (PikvmConnectionError, PikvmApiError, TimeoutError) as err:
+            raise UpdateFailed(str(err)) from err
 
         self._process_atx_event(atx)
         self._process_hw_event(hw_info)
         self._process_hid_event(hid)
         self._process_msd_event(msd)
         self._process_gpio_full(gpio)
+        self._process_info(info)
 
         return dict(self._state)
+
+    def _process_info(self, info: dict[str, Any]) -> None:
+        """Extract version/model/hostname from the /api/info result."""
+        system = info.get("system") or {}
+        platform = (info.get("hw") or {}).get("platform") or {}
+        server = (info.get("meta") or {}).get("server") or {}
+        kvmd = system.get("kvmd") or {}
+        self._state["info"] = {
+            "version": kvmd.get("version"),
+            "model": platform.get("model") or platform.get("type"),
+            "platform": platform.get("base") or platform.get("type"),
+            "hostname": server.get("host"),
+        }
 
     async def _ws_loop(self) -> None:
         """Maintain WebSocket connection with automatic reconnect."""
         while True:
             try:
                 await self._ws_connect_and_listen()
-            except PikvmAuthError as err:
-                _LOGGER.error("PiKVM WebSocket auth failed: %s", err)
-                self.entry.async_start_reauth(self.hass)
+                err: Exception = ConnectionError("WebSocket closed by server")
+            except PikvmAuthError as auth_err:
+                _LOGGER.error("PiKVM WebSocket auth failed: %s", auth_err)
+                if self.last_update_success:
+                    self.async_set_update_error(auth_err)
+                self.config_entry.async_start_reauth(self.hass)
                 return  # Stop reconnecting on auth failure
-            except (PikvmConnectionError, aiohttp.ClientError, Exception) as err:
-                reconnect_delay = self.entry.options.get(
-                    CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY
-                )
-                _LOGGER.warning(
-                    "PiKVM WebSocket disconnected: %s. Reconnecting in %ds",
-                    err,
-                    reconnect_delay,
-                )
-                await asyncio.sleep(reconnect_delay)
+            except Exception as ex:  # noqa: BLE001 - keep the loop alive on any error
+                err = ex
+
+            base = self.config_entry.options.get(
+                CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY
+            )
+            delay = min(base * 2**self._ws_failures, MAX_WS_RECONNECT_DELAY)
+            self._ws_failures += 1
+            _LOGGER.warning(
+                "PiKVM WebSocket disconnected: %s. Reconnecting in %ds", err, delay
+            )
+            if self.last_update_success:
+                self.async_set_update_error(err)
+            await asyncio.sleep(delay)
 
     async def _ws_connect_and_listen(self) -> None:
         """Connect to WebSocket and process events."""
         self._ws = await self.client.connect_ws()
+        self._ws_failures = 0
         _LOGGER.info("PiKVM WebSocket connected")
 
         try:
@@ -164,6 +199,7 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             updated = True
         elif event_type == "loop":
             _LOGGER.debug("PiKVM WebSocket initial state bundle complete")
+            self.async_set_updated_data(dict(self._state))
 
         if updated:
             self.async_set_updated_data(dict(self._state))
@@ -210,9 +246,13 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if parsed:
             current_throttling = current.get("throttling", {})
             if "undervoltage" in parsed:
-                current_throttling["undervoltage"] = parsed["undervoltage"].get("now", False)
+                current_throttling["undervoltage"] = parsed["undervoltage"].get(
+                    "now", False
+                )
             if "freq_capped" in parsed:
-                current_throttling["freq_capped"] = parsed["freq_capped"].get("now", False)
+                current_throttling["freq_capped"] = parsed["freq_capped"].get(
+                    "now", False
+                )
             if "throttled" in parsed:
                 current_throttling["throttled"] = parsed["throttled"].get("now", False)
             current["throttling"] = current_throttling
@@ -229,7 +269,9 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if "jiggler" in event:
             jiggler = event["jiggler"]
             if isinstance(jiggler, dict):
-                current["jiggler"] = jiggler.get("enabled", current.get("jiggler", False))
+                current["jiggler"] = jiggler.get(
+                    "enabled", current.get("jiggler", False)
+                )
             else:
                 current["jiggler"] = bool(jiggler)
 
