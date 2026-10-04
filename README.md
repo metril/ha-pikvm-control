@@ -43,7 +43,7 @@ During setup you'll be asked for:
 | **URL** | Base URL of your PiKVM device (e.g., `https://pikvm.local`) |
 | **Username** | PiKVM username (default: `admin`) |
 | **Password** | PiKVM password |
-| **TOTP Secret** | The TOTP secret key for two-factor authentication |
+| **TOTP Secret** | Optional. TOTP secret key for two-factor authentication (leave blank if 2FA is disabled) |
 | **Verify SSL** | Whether to verify SSL certificates (default: off) |
 
 ## Entities
@@ -97,8 +97,14 @@ Type a text string on the remote system.
 |-------|-------------|
 | device_id | Target PiKVM device |
 | text | The text to type |
+| keymap | Optional keyboard layout (keymap) used when typing the text |
 
 ## Requirements
 
 - A PiKVM device accessible over the network
-- PiKVM credentials with TOTP secret
+- PiKVM credentials (plus TOTP secret if 2FA is enabled)
+- Home Assistant 2026.1 or newer
+
+## Releases
+
+Releases are cut automatically when the version in `custom_components/pikvm/manifest.json` changes on `main`.

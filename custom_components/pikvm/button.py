@@ -3,21 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from homeassistant.components.button import (
     ButtonDeviceClass,
     ButtonEntity,
     ButtonEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
-from .coordinator import PikvmDataUpdateCoordinator
-from .entity import PikvmEntity, detect_kvm_ports, get_kvm_channel_names, gpio_display_name
+from .api import PikvmApiError, PikvmAuthError, PikvmConnectionError
+from .coordinator import PikvmConfigEntry, PikvmDataUpdateCoordinator
+from .entity import (
+    PikvmEntity,
+    detect_kvm_ports,
+    get_kvm_channel_names,
+    gpio_display_name,
+)
 
 
 @dataclass(frozen=True)
@@ -30,34 +33,35 @@ class PikvmButtonDescription(ButtonEntityDescription):
 BUTTONS: tuple[PikvmButtonDescription, ...] = (
     PikvmButtonDescription(
         key="atx_power_short",
-        name="ATX Power Short",
+        translation_key="atx_power_short",
         device_class=ButtonDeviceClass.RESTART,
         icon="mdi:power",
         button_type="power",
     ),
     PikvmButtonDescription(
         key="atx_power_long",
-        name="ATX Power Long",
+        translation_key="atx_power_long",
         icon="mdi:power-cycle",
         button_type="power_long",
     ),
     PikvmButtonDescription(
         key="atx_reset",
-        name="ATX Reset",
+        translation_key="atx_reset",
         icon="mdi:restart",
         button_type="reset",
     ),
 )
 
+PARALLEL_UPDATES = 1
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: PikvmConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up PiKVM button entities."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: PikvmDataUpdateCoordinator = data["coordinator"]
+    coordinator = entry.runtime_data
 
     entities: list[ButtonEntity] = [
         PikvmButton(coordinator, entry, desc) for desc in BUTTONS
@@ -88,7 +92,7 @@ class PikvmButton(PikvmEntity, ButtonEntity):
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
         description: PikvmButtonDescription,
     ) -> None:
         """Initialize the button."""
@@ -99,10 +103,8 @@ class PikvmButton(PikvmEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Send ATX button press."""
         try:
-            await self.coordinator.client.atx_click(
-                self.entity_description.button_type
-            )
-        except Exception as err:
+            await self.coordinator.client.atx_click(self.entity_description.button_type)
+        except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
             raise HomeAssistantError(
                 f"Failed to send ATX {self.entity_description.button_type}: {err}"
             ) from err
@@ -114,7 +116,7 @@ class PikvmGpioPulseButton(PikvmEntity, ButtonEntity):
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
         channel_name: str,
         delay: float,
     ) -> None:
@@ -123,17 +125,17 @@ class PikvmGpioPulseButton(PikvmEntity, ButtonEntity):
         self._channel_name = channel_name
         self._delay = delay
         self._attr_unique_id = f"{entry.entry_id}_gpio_pulse_{channel_name}"
-        gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+        gpio_labels = (
+            coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+        )
         self._attr_name = gpio_display_name(channel_name, gpio_labels)
         self._attr_icon = "mdi:gesture-tap-button"
 
     async def async_press(self) -> None:
         """Pulse the GPIO channel."""
         try:
-            await self.coordinator.client.gpio_pulse(
-                self._channel_name, self._delay
-            )
-        except Exception as err:
+            await self.coordinator.client.gpio_pulse(self._channel_name, self._delay)
+        except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
             raise HomeAssistantError(
                 f"Failed to pulse GPIO {self._channel_name}: {err}"
             ) from err

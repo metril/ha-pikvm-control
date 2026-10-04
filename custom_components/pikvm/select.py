@@ -3,29 +3,30 @@
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
-from .coordinator import PikvmDataUpdateCoordinator
+from .api import PikvmApiError, PikvmAuthError, PikvmConnectionError
+from .coordinator import PikvmConfigEntry, PikvmDataUpdateCoordinator
 from .entity import PikvmEntity, detect_kvm_ports
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 1
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: PikvmConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up PiKVM select entities."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: PikvmDataUpdateCoordinator = data["coordinator"]
+    coordinator = entry.runtime_data
 
     if coordinator.data is None:
         return
@@ -50,13 +51,13 @@ async def async_setup_entry(
 class PikvmKvmPortSelect(PikvmEntity, SelectEntity):
     """Select entity for KVM port switching."""
 
-    _attr_name = "KVM Port"
+    _attr_translation_key = "kvm_port"
     _attr_icon = "mdi:monitor-multiple"
 
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
         ports: list[dict[str, Any]],
     ) -> None:
         """Initialize the KVM port select."""
@@ -87,7 +88,7 @@ class PikvmKvmPortSelect(PikvmEntity, SelectEntity):
                     await self.coordinator.client.gpio_pulse(
                         port["button_channel"], port["pulse_delay"]
                     )
-                except Exception as err:
+                except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
                     raise HomeAssistantError(
                         f"Failed to switch KVM to {option}: {err}"
                     ) from err
@@ -99,13 +100,13 @@ class PikvmKvmPortSelect(PikvmEntity, SelectEntity):
 class PikvmMsdImageSelect(PikvmEntity, SelectEntity):
     """Select entity for choosing which ISO image to mount via MSD."""
 
-    _attr_name = "MSD Image"
+    _attr_translation_key = "msd_image"
     _attr_icon = "mdi:disc"
 
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
     ) -> None:
         """Initialize the MSD image select."""
         super().__init__(coordinator, entry)
@@ -130,23 +131,33 @@ class PikvmMsdImageSelect(PikvmEntity, SelectEntity):
         msd = self.coordinator.data.get("msd", {}) if self.coordinator.data else {}
         was_connected = msd.get("connected", False)
 
+        client = self.coordinator.client
         try:
             # Must disconnect before changing params
             if was_connected:
-                await self.coordinator.client.set_msd_connected(False)
+                await client.set_msd_connected(False)
 
             # Set the image (keep current cdrom/rw settings)
-            await self.coordinator.client.set_msd_params(
+            await client.set_msd_params(
                 image=option,
                 cdrom=msd.get("cdrom", True),
                 rw=msd.get("rw", False),
             )
-
-            # Reconnect if it was connected before
-            if was_connected:
-                await self.coordinator.client.set_msd_connected(True)
-
-        except Exception as err:
+        except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
             raise HomeAssistantError(
                 f"Failed to select MSD image '{option}': {err}"
             ) from err
+        finally:
+            # Reconnect if it was connected before
+            if was_connected:
+                try:
+                    await client.set_msd_connected(True)
+                except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
+                    if sys.exc_info()[1] is None:
+                        raise HomeAssistantError(
+                            f"Failed to reconnect MSD after selecting '{option}': {err}"
+                        ) from err
+                    # Keep the original error as the reported cause
+                    _LOGGER.warning(
+                        "Failed to reconnect MSD after selecting '%s': %s", option, err
+                    )

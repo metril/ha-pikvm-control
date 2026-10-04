@@ -13,7 +13,7 @@
         },
         "data_description": {
           "url": "The base URL of your PiKVM device (e.g., https://pikvm.local)",
-          "totp_secret": "The TOTP secret key for two-factor authentication"
+          "totp_secret": "Leave empty if two-factor auth is disabled"
         }
       },
       "reauth_confirm": {
@@ -23,6 +23,9 @@
           "username": "Username",
           "password": "Password",
           "totp_secret": "TOTP Secret"
+        },
+        "data_description": {
+          "totp_secret": "Leave empty if two-factor auth is disabled"
         }
       },
       "reconfigure": {
@@ -34,17 +37,150 @@
           "password": "Password",
           "totp_secret": "TOTP Secret",
           "verify_ssl": "Verify SSL certificate"
+        },
+        "data_description": {
+          "totp_secret": "Leave empty if two-factor auth is disabled"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to PiKVM device",
       "invalid_auth": "Invalid authentication credentials",
-      "unknown": "Unexpected error occurred"
+      "unknown": "Unexpected error occurred",
+      "invalid_totp": "Invalid TOTP secret"
     },
     "abort": {
       "already_configured": "This PiKVM device is already configured",
-      "reauth_successful": "Re-authentication was successful"
+      "reauth_successful": "Re-authentication was successful",
+      "reconfigure_successful": "Reconfiguration was successful",
+      "unique_id_mismatch": "The URL does not match the device being reconfigured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PiKVM Options",
+        "data": {
+          "hdd_hold_time": "HDD activity hold time (seconds)",
+          "ws_reconnect_delay": "WebSocket reconnect delay (seconds)",
+          "http_timeout": "HTTP request timeout (seconds)"
+        },
+        "data_description": {
+          "hdd_hold_time": "How long the HDD activity sensor stays ON after the last activity pulse. Higher values produce a more stable sensor.",
+          "ws_reconnect_delay": "How long to wait before reconnecting a dropped WebSocket connection.",
+          "http_timeout": "Timeout for API requests. Increase for slow or remote PiKVM devices."
+        }
+      }
+    }
+  },
+  "services": {
+    "send_shortcut": {
+      "name": "Send keyboard shortcut",
+      "description": "Sends a keyboard shortcut to the remote system via PiKVM.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The PiKVM device to send the shortcut to."
+        },
+        "keys": {
+          "name": "Keys",
+          "description": "Comma-separated key names (e.g., ControlLeft,AltLeft,Delete)."
+        }
+      }
+    },
+    "type_text": {
+      "name": "Type text",
+      "description": "Types a text string on the remote system via PiKVM.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The PiKVM device to type on."
+        },
+        "text": {
+          "name": "Text",
+          "description": "The text to type."
+        },
+        "keymap": {
+          "name": "Keymap",
+          "description": "The keyboard layout used when typing the text."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "Device {device_id} not found"
+    },
+    "entry_not_loaded": {
+      "message": "No loaded PiKVM integration found for this device"
+    },
+    "action_failed": {
+      "message": "PiKVM action failed: {error}"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "cpu_temperature": {
+        "name": "CPU Temperature"
+      },
+      "cpu_usage": {
+        "name": "CPU Usage"
+      },
+      "memory_usage": {
+        "name": "Memory Usage"
+      }
+    },
+    "binary_sensor": {
+      "power_led": {
+        "name": "Power LED"
+      },
+      "hdd_activity": {
+        "name": "HDD Activity"
+      },
+      "undervoltage": {
+        "name": "Undervoltage"
+      },
+      "frequency_capped": {
+        "name": "Frequency Capped"
+      },
+      "throttled": {
+        "name": "Throttled"
+      }
+    },
+    "button": {
+      "atx_power_short": {
+        "name": "ATX Power Short"
+      },
+      "atx_power_long": {
+        "name": "ATX Power Long"
+      },
+      "atx_reset": {
+        "name": "ATX Reset"
+      }
+    },
+    "switch": {
+      "hid_jiggler": {
+        "name": "HID Jiggler"
+      },
+      "msd_connected": {
+        "name": "MSD Connected"
+      },
+      "usb_connection": {
+        "name": "USB Connection"
+      }
+    },
+    "select": {
+      "kvm_port": {
+        "name": "KVM Port"
+      },
+      "msd_image": {
+        "name": "MSD Image"
+      }
+    },
+    "camera": {
+      "screen": {
+        "name": "Screen"
+      }
     }
   }
 }

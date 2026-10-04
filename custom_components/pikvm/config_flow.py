@@ -6,21 +6,31 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithConfigEntry,
+    OptionsFlowWithReload,
 )
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
 )
 
-from .api import PikvmApiClient, PikvmAuthError, PikvmConnectionError
+from .api import (
+    PikvmApiClient,
+    PikvmApiError,
+    PikvmAuthError,
+    PikvmConnectionError,
+    normalize_totp_secret,
+    validate_totp_secret,
+)
 from .const import (
     CONF_HDD_HOLD_TIME,
     CONF_HTTP_TIMEOUT,
@@ -38,15 +48,29 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+_URL_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.URL))
+_PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
+
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_PIKVM_URL): str,
+        vol.Required(CONF_PIKVM_URL): _URL_SELECTOR,
         vol.Required(CONF_PIKVM_USER, default="admin"): str,
-        vol.Required(CONF_PIKVM_PASS): str,
-        vol.Required(CONF_PIKVM_TOTP_SECRET): str,
+        vol.Required(CONF_PIKVM_PASS): _PASSWORD_SELECTOR,
+        vol.Optional(CONF_PIKVM_TOTP_SECRET, default=""): _PASSWORD_SELECTOR,
         vol.Optional(CONF_VERIFY_SSL, default=False): bool,
     }
 )
+
+
+def _normalize(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize URL and TOTP secret in submitted data."""
+    data = dict(data)
+    if CONF_PIKVM_URL in data:
+        data[CONF_PIKVM_URL] = data[CONF_PIKVM_URL].strip().rstrip("/")
+    data[CONF_PIKVM_TOTP_SECRET] = normalize_totp_secret(
+        data.get(CONF_PIKVM_TOTP_SECRET, "")
+    )
+    return data
 
 
 class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -55,11 +79,10 @@ class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     @staticmethod
-    def async_get_options_flow(
-        config_entry: ConfigEntry,
-    ) -> PikvmOptionsFlowHandler:
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> PikvmOptionsFlowHandler:
         """Get the options flow handler."""
-        return PikvmOptionsFlowHandler(config_entry)
+        return PikvmOptionsFlowHandler()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -68,15 +91,13 @@ class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input[CONF_PIKVM_URL] = user_input[CONF_PIKVM_URL].rstrip("/")
-
+            user_input = _normalize(user_input)
             error = await self._test_connection(user_input)
             if error:
                 errors["base"] = error
             else:
                 await self.async_set_unique_id(user_input[CONF_PIKVM_URL])
                 self._abort_if_unique_id_configured()
-
                 return self.async_create_entry(
                     title=f"PiKVM ({user_input[CONF_PIKVM_URL]})",
                     data=user_input,
@@ -84,13 +105,13 @@ class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=self.add_suggested_values_to_schema(
+                STEP_USER_DATA_SCHEMA, user_input
+            ),
             errors=errors,
         )
 
-    async def async_step_reauth(
-        self, entry_data: dict[str, Any]
-    ) -> ConfigFlowResult:
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         """Handle reauth when credentials become invalid."""
         return await self.async_step_reauth_confirm()
 
@@ -102,22 +123,26 @@ class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
         reauth_entry = self._get_reauth_entry()
 
         if user_input is not None:
-            updated_data = {**reauth_entry.data, **user_input}
-            error = await self._test_connection(updated_data)
+            user_input = _normalize(user_input)
+            error = await self._test_connection({**reauth_entry.data, **user_input})
             if error:
                 errors["base"] = error
             else:
                 return self.async_update_reload_and_abort(
-                    reauth_entry, data=updated_data
+                    reauth_entry, data_updates=user_input
                 )
 
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_PIKVM_USER, default=reauth_entry.data[CONF_PIKVM_USER]): str,
-                    vol.Required(CONF_PIKVM_PASS): str,
-                    vol.Required(CONF_PIKVM_TOTP_SECRET): str,
+                    vol.Required(
+                        CONF_PIKVM_USER, default=reauth_entry.data[CONF_PIKVM_USER]
+                    ): str,
+                    vol.Required(CONF_PIKVM_PASS): _PASSWORD_SELECTOR,
+                    vol.Optional(
+                        CONF_PIKVM_TOTP_SECRET, default=""
+                    ): _PASSWORD_SELECTOR,
                 }
             ),
             errors=errors,
@@ -128,43 +153,61 @@ class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Handle reconfiguration."""
         errors: dict[str, str] = {}
-        reconfigure_entry = self._get_reconfigure_entry()
+        entry = self._get_reconfigure_entry()
 
         if user_input is not None:
-            user_input[CONF_PIKVM_URL] = user_input[CONF_PIKVM_URL].rstrip("/")
+            user_input = _normalize(user_input)
             error = await self._test_connection(user_input)
             if error:
                 errors["base"] = error
             else:
+                url = user_input[CONF_PIKVM_URL]
+                for other in self._async_current_entries(include_ignore=False):
+                    if other.entry_id != entry.entry_id and other.unique_id == url:
+                        return self.async_abort(reason="already_configured")
                 return self.async_update_reload_and_abort(
-                    reconfigure_entry, data=user_input
+                    entry,
+                    unique_id=url,
+                    title=f"PiKVM ({url})",
+                    data_updates=user_input,
                 )
 
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_PIKVM_URL, default=reconfigure_entry.data[CONF_PIKVM_URL]): str,
-                    vol.Required(CONF_PIKVM_USER, default=reconfigure_entry.data[CONF_PIKVM_USER]): str,
-                    vol.Required(CONF_PIKVM_PASS): str,
-                    vol.Required(CONF_PIKVM_TOTP_SECRET): str,
-                    vol.Optional(CONF_VERIFY_SSL, default=reconfigure_entry.data.get(CONF_VERIFY_SSL, False)): bool,
+                    vol.Required(
+                        CONF_PIKVM_URL, default=entry.data[CONF_PIKVM_URL]
+                    ): _URL_SELECTOR,
+                    vol.Required(
+                        CONF_PIKVM_USER, default=entry.data[CONF_PIKVM_USER]
+                    ): str,
+                    vol.Required(CONF_PIKVM_PASS): _PASSWORD_SELECTOR,
+                    vol.Optional(
+                        CONF_PIKVM_TOTP_SECRET, default=""
+                    ): _PASSWORD_SELECTOR,
+                    vol.Optional(
+                        CONF_VERIFY_SSL,
+                        default=entry.data.get(CONF_VERIFY_SSL, False),
+                    ): bool,
                 }
             ),
             errors=errors,
         )
 
     async def _test_connection(self, data: dict[str, Any]) -> str | None:
-        """Test the connection to PiKVM."""
-        verify_ssl = data.get(CONF_VERIFY_SSL, False)
-        session = async_get_clientsession(self.hass, verify_ssl=verify_ssl)
+        """Test the connection to PiKVM; return an error code or None."""
+        totp = normalize_totp_secret(data.get(CONF_PIKVM_TOTP_SECRET) or "")
+        if not validate_totp_secret(totp):
+            return "invalid_totp"
 
+        verify_ssl = data.get(CONF_VERIFY_SSL, False)
         client = PikvmApiClient(
-            session=session,
+            session=async_get_clientsession(self.hass, verify_ssl=verify_ssl),
             url=data[CONF_PIKVM_URL],
             username=data[CONF_PIKVM_USER],
             password=data[CONF_PIKVM_PASS],
-            totp_secret=data[CONF_PIKVM_TOTP_SECRET],
+            totp_secret=totp or None,
             verify_ssl=verify_ssl,
         )
 
@@ -172,7 +215,7 @@ class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
             await client.test_connection()
         except PikvmAuthError:
             return "invalid_auth"
-        except PikvmConnectionError:
+        except (PikvmConnectionError, PikvmApiError):
             return "cannot_connect"
         except Exception:
             _LOGGER.exception("Unexpected error during PiKVM connection test")
@@ -180,7 +223,7 @@ class PikvmConfigFlow(ConfigFlow, domain=DOMAIN):
         return None
 
 
-class PikvmOptionsFlowHandler(OptionsFlowWithConfigEntry):
+class PikvmOptionsFlowHandler(OptionsFlowWithReload):
     """Handle PiKVM options."""
 
     async def async_step_init(
@@ -191,6 +234,14 @@ class PikvmOptionsFlowHandler(OptionsFlowWithConfigEntry):
             return self.async_create_entry(title="", data=user_input)
 
         options = self.config_entry.options
+
+        def _slider(min_: int, max_: int) -> NumberSelector:
+            return NumberSelector(
+                NumberSelectorConfig(
+                    min=min_, max=max_, step=1, mode=NumberSelectorMode.SLIDER
+                )
+            )
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -198,27 +249,17 @@ class PikvmOptionsFlowHandler(OptionsFlowWithConfigEntry):
                     vol.Required(
                         CONF_HDD_HOLD_TIME,
                         default=options.get(CONF_HDD_HOLD_TIME, DEFAULT_HDD_HOLD_TIME),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=1, max=30, step=1, mode=NumberSelectorMode.SLIDER
-                        )
-                    ),
+                    ): _slider(1, 30),
                     vol.Required(
                         CONF_WS_RECONNECT_DELAY,
-                        default=options.get(CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=1, max=30, step=1, mode=NumberSelectorMode.SLIDER
-                        )
-                    ),
+                        default=options.get(
+                            CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY
+                        ),
+                    ): _slider(1, 30),
                     vol.Required(
                         CONF_HTTP_TIMEOUT,
                         default=options.get(CONF_HTTP_TIMEOUT, DEFAULT_HTTP_TIMEOUT),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=5, max=60, step=1, mode=NumberSelectorMode.SLIDER
-                        )
-                    ),
+                    ): _slider(5, 60),
                 }
             ),
         )

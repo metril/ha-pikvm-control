@@ -5,12 +5,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_PIKVM_URL, DOMAIN
-from .coordinator import PikvmDataUpdateCoordinator
+from .coordinator import PikvmConfigEntry, PikvmDataUpdateCoordinator
 
 
 def gpio_display_name(channel_name: str, labels: dict[str, str]) -> str:
@@ -69,15 +68,19 @@ def detect_kvm_ports(
     for prefix in common_prefixes:
         led_channel = input_by_prefix[prefix]
         button_channel, config = output_by_prefix[prefix]
-        label = gpio_labels.get(led_channel) or gpio_labels.get(button_channel) or prefix
+        label = (
+            gpio_labels.get(led_channel) or gpio_labels.get(button_channel) or prefix
+        )
         pulse_delay = config.get("pulse", {}).get("delay", 0.1)
 
-        ports.append({
-            "label": label,
-            "led_channel": led_channel,
-            "button_channel": button_channel,
-            "pulse_delay": pulse_delay,
-        })
+        ports.append(
+            {
+                "label": label,
+                "led_channel": led_channel,
+                "button_channel": button_channel,
+                "pulse_delay": pulse_delay,
+            }
+        )
 
     return ports
 
@@ -95,17 +98,24 @@ class PikvmEntity(CoordinatorEntity[PikvmDataUpdateCoordinator]):
     """Base entity for PiKVM devices."""
 
     _attr_has_entity_name = True
+    coordinator: PikvmDataUpdateCoordinator
 
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
     ) -> None:
         """Initialize the entity."""
         super().__init__(coordinator)
-        self._attr_device_info = DeviceInfo(
+        info = (coordinator.data or {}).get("info", {})
+        device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="PiKVM",
-            configuration_url=entry.data.get(CONF_PIKVM_URL),
+            configuration_url=entry.data[CONF_PIKVM_URL],
         )
+        if sw_version := info.get("version"):
+            device_info["sw_version"] = sw_version
+        if model := info.get("model"):
+            device_info["model"] = model
+        self._attr_device_info = device_info

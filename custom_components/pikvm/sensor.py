@@ -12,13 +12,11 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
-from .coordinator import PikvmDataUpdateCoordinator
+from .coordinator import PikvmConfigEntry, PikvmDataUpdateCoordinator
 from .entity import PikvmEntity
 
 
@@ -32,7 +30,7 @@ class PikvmSensorDescription(SensorEntityDescription):
 SENSORS: tuple[PikvmSensorDescription, ...] = (
     PikvmSensorDescription(
         key="cpu_temp",
-        name="CPU Temperature",
+        translation_key="cpu_temperature",
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -41,7 +39,7 @@ SENSORS: tuple[PikvmSensorDescription, ...] = (
     ),
     PikvmSensorDescription(
         key="cpu_usage",
-        name="CPU Usage",
+        translation_key="cpu_usage",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:cpu-64-bit",
@@ -49,7 +47,7 @@ SENSORS: tuple[PikvmSensorDescription, ...] = (
     ),
     PikvmSensorDescription(
         key="mem_usage",
-        name="Memory Usage",
+        translation_key="memory_usage",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:memory",
@@ -57,19 +55,18 @@ SENSORS: tuple[PikvmSensorDescription, ...] = (
     ),
 )
 
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: PikvmConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up PiKVM sensor entities."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: PikvmDataUpdateCoordinator = data["coordinator"]
+    coordinator = entry.runtime_data
 
-    async_add_entities(
-        PikvmSensor(coordinator, entry, desc) for desc in SENSORS
-    )
+    async_add_entities(PikvmSensor(coordinator, entry, desc) for desc in SENSORS)
 
 
 class PikvmSensor(PikvmEntity, SensorEntity):
@@ -80,7 +77,7 @@ class PikvmSensor(PikvmEntity, SensorEntity):
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
         description: PikvmSensorDescription,
     ) -> None:
         """Initialize the sensor."""

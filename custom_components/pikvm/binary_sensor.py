@@ -11,15 +11,19 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 
-from .const import CONF_HDD_HOLD_TIME, DEFAULT_HDD_HOLD_TIME, DOMAIN
-from .coordinator import PikvmDataUpdateCoordinator
-from .entity import PikvmEntity, detect_kvm_ports, get_kvm_channel_names, gpio_display_name
+from .const import CONF_HDD_HOLD_TIME, DEFAULT_HDD_HOLD_TIME
+from .coordinator import PikvmConfigEntry, PikvmDataUpdateCoordinator
+from .entity import (
+    PikvmEntity,
+    detect_kvm_ports,
+    get_kvm_channel_names,
+    gpio_display_name,
+)
 
 
 @dataclass(frozen=True)
@@ -32,48 +36,55 @@ class PikvmBinarySensorDescription(BinarySensorEntityDescription):
 BINARY_SENSORS: tuple[PikvmBinarySensorDescription, ...] = (
     PikvmBinarySensorDescription(
         key="power_led",
-        name="Power LED",
+        translation_key="power_led",
         device_class=BinarySensorDeviceClass.POWER,
         value_fn=lambda data: data.get("atx", {}).get("leds", {}).get("power"),
     ),
     PikvmBinarySensorDescription(
         key="hdd_activity",
-        name="HDD Activity",
+        translation_key="hdd_activity",
         device_class=BinarySensorDeviceClass.RUNNING,
         value_fn=lambda data: data.get("atx", {}).get("leds", {}).get("hdd"),
     ),
     PikvmBinarySensorDescription(
         key="undervoltage",
-        name="Undervoltage",
+        translation_key="undervoltage",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.get("system", {}).get("throttling", {}).get("undervoltage"),
+        value_fn=lambda data: (
+            data.get("system", {}).get("throttling", {}).get("undervoltage")
+        ),
     ),
     PikvmBinarySensorDescription(
         key="freq_capped",
-        name="Frequency Capped",
+        translation_key="frequency_capped",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.get("system", {}).get("throttling", {}).get("freq_capped"),
+        value_fn=lambda data: (
+            data.get("system", {}).get("throttling", {}).get("freq_capped")
+        ),
     ),
     PikvmBinarySensorDescription(
         key="throttled",
-        name="Throttled",
+        translation_key="throttled",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.get("system", {}).get("throttling", {}).get("throttled"),
+        value_fn=lambda data: (
+            data.get("system", {}).get("throttling", {}).get("throttled")
+        ),
     ),
 )
+
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: PikvmConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up PiKVM binary sensor entities."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: PikvmDataUpdateCoordinator = data["coordinator"]
+    coordinator = entry.runtime_data
 
     entities: list[BinarySensorEntity] = []
     for desc in BINARY_SENSORS:
@@ -103,7 +114,7 @@ class PikvmBinarySensor(PikvmEntity, BinarySensorEntity):
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
         description: PikvmBinarySensorDescription,
     ) -> None:
         """Initialize the binary sensor."""
@@ -125,19 +136,23 @@ class PikvmHddActivityBinarySensor(PikvmBinarySensor):
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
         description: PikvmBinarySensorDescription,
     ) -> None:
         """Initialize the HDD activity sensor."""
         super().__init__(coordinator, entry, description)
         self._hold_timer: CALLBACK_TYPE | None = None
         self._entry = entry
+        self._attr_is_on = False
+        if coordinator.data is not None:
+            self._attr_is_on = bool(description.value_fn(coordinator.data))
 
     @property
     def is_on(self) -> bool | None:
         """Return the held sensor state."""
         return self._attr_is_on
 
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Handle coordinator data update with hold timer logic."""
         if self.coordinator.data is None:
@@ -160,6 +175,7 @@ class PikvmHddActivityBinarySensor(PikvmBinarySensor):
             self.async_write_ha_state()
         # If raw_value is False/None, do nothing — the timer will handle OFF
 
+    @callback
     def _timer_expired(self, _now: Any) -> None:
         """Handle hold timer expiration."""
         self._hold_timer = None
@@ -184,14 +200,16 @@ class PikvmGpioInputSensor(PikvmEntity, BinarySensorEntity):
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: PikvmConfigEntry,
         channel_name: str,
     ) -> None:
         """Initialize the GPIO input binary sensor."""
         super().__init__(coordinator, entry)
         self._channel_name = channel_name
         self._attr_unique_id = f"{entry.entry_id}_gpio_in_{channel_name}"
-        gpio_labels = coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+        gpio_labels = (
+            coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+        )
         self._attr_name = gpio_display_name(channel_name, gpio_labels)
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
