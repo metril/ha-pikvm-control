@@ -29,8 +29,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Top-level keys of the modern kvmd `info` WebSocket event and legacy `hw`.
-INFO_FIELDS = ("hw", "system", "meta", "health", "node")
 
 type PikvmConfigEntry = ConfigEntry[PikvmDataUpdateCoordinator]
 
@@ -287,30 +285,17 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.debug("PiKVM WS event: %s", event_type)
 
         changed = False
-        if event_type in ("atx_state", "atx"):
+        if event_type == "atx":
             changed = self._process_atx_event(event)
-        elif event_type == "info_hw_state":  # legacy: hw-shaped payload
-            changed = self._process_info({"hw": event})
         elif event_type == "info":
-            # Modern kvmd sends {field: value} with field in
-            # system/meta/health/node/...; older builds sent hw-shaped payloads.
-            if any(k in event for k in INFO_FIELDS):
-                changed = self._process_info(event)
-            else:
-                changed = self._process_info({"hw": event})
-        elif event_type == "info_system_state":
-            changed = self._process_info({"system": event})
-        elif event_type == "info_meta_state":
-            changed = self._process_info({"meta": event})
-        elif event_type in ("hid_state", "hid"):
+            changed = self._process_info(event)
+        elif event_type == "hid":
             changed = self._process_hid_event(event)
-        elif event_type in ("msd_state", "msd"):
+        elif event_type == "msd":
             changed = self._process_msd_event(event)
-        elif event_type in ("gpio_state", "gpio"):
-            changed = self._process_gpio_state_event(event)
-        elif event_type in ("gpio_model_state", "gpio_model"):
-            changed = self._process_gpio_model_event(event)
-        elif event_type in ("streamer", "streamer_state"):
+        elif event_type == "gpio":
+            changed = self._process_gpio_event(event)
+        elif event_type == "streamer":
             changed = self._process_streamer_event(event)
         elif event_type == "loop":
             _LOGGER.debug("PiKVM WebSocket initial state bundle complete")
@@ -334,23 +319,21 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._set_section("atx", new)
 
     def _process_info(self, info: dict[str, Any]) -> bool:
-        """Process an /api/info-shaped dict with optional hw/system/meta."""
+        """Process an info dict with any of health/system/meta/node (partial)."""
         changed = False
-        if "hw" in info:
-            changed |= self._process_hw_event({"hw": info["hw"] or {}})
-        if "health" in info:  # modern kvmd: health is top-level
-            changed |= self._process_hw_event({"hw": {"health": info["health"]}})
+        if "health" in info:
+            changed |= self._process_health(info["health"] or {})
         fields: dict[str, Any] = {}
         if "system" in info:
             system = info["system"] or {}
             kvmd = system.get("kvmd") or {}
             if kvmd.get("version") is not None:
                 fields["kvmd_version"] = kvmd["version"]
-            platform = system.get("platform") or {}  # modern kvmd location
+            platform = system.get("platform") or {}
             for key in ("model", "base", "serial"):
                 if platform.get(key) is not None:
                     fields[key] = platform[key]
-        if "node" in info:  # modern kvmd: real hostname
+        if "node" in info:  # real hostname; meta.server.host is only a fallback
             host = (info["node"] or {}).get("host")
             if host is not None:
                 fields["hostname"] = host
@@ -389,10 +372,8 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if kwargs:
             registry.async_update_device(device.id, **kwargs)
 
-    def _process_hw_event(self, event: dict[str, Any]) -> bool:
-        """Process hardware info state (merges partial updates)."""
-        hw = event.get("hw", event)
-        health = hw.get("health") or {}
+    def _process_health(self, health: dict[str, Any]) -> bool:
+        """Process health (CPU temp/usage, memory, throttling), merging partials."""
         new = {**self._state.get("system", {})}
 
         temp = health.get("temp") or {}
@@ -413,18 +394,7 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     throttling[key] = parsed[key].get("now", False)
             new["throttling"] = throttling
 
-        changed = self._set_section("system", new)
-
-        platform = hw.get("platform") or {}
-        if platform:
-            changed |= self._merge_info(
-                {
-                    "model": platform.get("model"),
-                    "base": platform.get("base"),
-                    "serial": platform.get("serial"),
-                }
-            )
-        return changed
+        return self._set_section("system", new)
 
     def _process_hid_event(self, event: dict[str, Any]) -> bool:
         """Process HID state (merges partial WebSocket updates)."""
@@ -562,26 +532,17 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             new[kind] = channels
         return self._set_section(section, new)
 
-    def _process_gpio_state_event(self, event: dict[str, Any]) -> bool:
-        """Process GPIO update from WebSocket.
+    def _process_gpio_event(self, event: dict[str, Any]) -> bool:
+        """Process a GPIO WebSocket event.
 
-        Modern kvmd sends ``{"state": {inputs?, outputs?}}`` for diffs and
-        ``{"model": ..., "state": ...}`` for a full resync. Legacy
-        ``gpio_state`` events carry ``inputs``/``outputs`` at the top level.
+        kvmd sends ``{"state": {inputs?, outputs?}}`` for diffs and
+        ``{"model": ..., "state": ...}`` for a full resync.
         """
         changed = False
         if isinstance(event.get("model"), dict):
             changed |= self._apply_gpio_model(event["model"])
         state = event.get("state")
         if not isinstance(state, dict):
-            state = {k: event[k] for k in ("inputs", "outputs") if k in event}
-        if not state:
-            _LOGGER.debug("GPIO event with unexpected structure: %s", event)
+            _LOGGER.debug("GPIO event without state: %s", event)
             return changed
         return self._merge_channels("gpio", state, deep=True) or changed
-
-    def _process_gpio_model_event(self, event: dict[str, Any]) -> bool:
-        """Process legacy gpio_model_state update from WebSocket."""
-        if "scheme" in event:
-            return self._apply_gpio_model(event)
-        return self._merge_channels("gpio_model", event, deep=False)

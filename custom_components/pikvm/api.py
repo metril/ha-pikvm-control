@@ -182,9 +182,13 @@ class PikvmApiClient:
         data = await self._request("GET", "/api/atx")
         return data.get("result", {})
 
-    async def get_system_info(self, fields: str = "hw,system,meta") -> dict[str, Any]:
+    async def get_system_info(
+        self, fields: str = "health,system,meta,node"
+    ) -> dict[str, Any]:
         """Get system info (hw health, kvmd system, meta)."""
-        data = await self._request("GET", "/api/info", params={"fields": fields})
+        data = await self._request(
+            "GET", "/api/info", params={"fields": fields, "legacy": "0"}
+        )
         return data.get("result", {})
 
     async def get_streamer_state(self) -> dict[str, Any]:
