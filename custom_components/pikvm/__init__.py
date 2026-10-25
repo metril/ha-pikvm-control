@@ -34,6 +34,7 @@ PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.CAMERA,
+    Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
@@ -140,6 +141,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: PikvmConfigEntry) -> boo
     coordinator = PikvmDataUpdateCoordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+    entry.async_on_unload(coordinator.async_stop)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await coordinator.async_start()
@@ -148,7 +150,4 @@ async def async_setup_entry(hass: HomeAssistant, entry: PikvmConfigEntry) -> boo
 
 async def async_unload_entry(hass: HomeAssistant, entry: PikvmConfigEntry) -> bool:
     """Unload a PiKVM Control config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        await entry.runtime_data.async_stop()
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

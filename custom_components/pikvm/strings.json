@@ -63,12 +63,14 @@
         "data": {
           "hdd_hold_time": "HDD activity hold time (seconds)",
           "ws_reconnect_delay": "WebSocket reconnect delay (seconds)",
-          "http_timeout": "HTTP request timeout (seconds)"
+          "http_timeout": "HTTP request timeout (seconds)",
+          "keep_video_active": "Keep video capture active (needed for resolution/FPS/HDMI signal when nobody is viewing; raises PiKVM CPU use)"
         },
         "data_description": {
           "hdd_hold_time": "How long the HDD activity sensor stays ON after the last activity pulse. Higher values produce a more stable sensor.",
           "ws_reconnect_delay": "How long to wait before reconnecting a dropped WebSocket connection.",
-          "http_timeout": "Timeout for API requests. Increase for slow or remote PiKVM devices."
+          "http_timeout": "Timeout for API requests. Increase for slow or remote PiKVM devices.",
+          "keep_video_active": "Keeps the PiKVM video streamer running so resolution, FPS and HDMI signal stay current when nobody is viewing. Increases PiKVM CPU use."
         }
       }
     }
@@ -128,6 +130,18 @@
       },
       "memory_usage": {
         "name": "Memory Usage"
+      },
+      "resolution": {
+        "name": "Resolution"
+      },
+      "captured_fps": {
+        "name": "Captured FPS"
+      },
+      "kvmd_version": {
+        "name": "KVMD Version"
+      },
+      "hostname": {
+        "name": "Hostname"
       }
     },
     "binary_sensor": {
@@ -145,6 +159,18 @@
       },
       "throttled": {
         "name": "Throttled"
+      },
+      "hdmi_signal": {
+        "name": "HDMI Signal"
+      },
+      "keyboard_online": {
+        "name": "Keyboard Online"
+      },
+      "mouse_online": {
+        "name": "Mouse Online"
+      },
+      "websocket_connected": {
+        "name": "WebSocket Connected"
       }
     },
     "button": {
@@ -156,6 +182,12 @@
       },
       "atx_reset": {
         "name": "ATX Reset"
+      },
+      "hid_reset": {
+        "name": "Reset HID"
+      },
+      "streamer_reset": {
+        "name": "Reset Video Streamer"
       }
     },
     "switch": {
@@ -175,11 +207,34 @@
       },
       "msd_image": {
         "name": "MSD Image"
+      },
+      "resolution": {
+        "name": "Resolution"
+      },
+      "mouse_output": {
+        "name": "Mouse Output"
+      },
+      "keyboard_output": {
+        "name": "Keyboard Output"
       }
     },
     "camera": {
       "screen": {
         "name": "Screen"
+      }
+    },
+    "number": {
+      "desired_fps": {
+        "name": "Target FPS"
+      },
+      "quality": {
+        "name": "JPEG Quality"
+      },
+      "h264_bitrate": {
+        "name": "H.264 Bitrate"
+      },
+      "h264_gop": {
+        "name": "H.264 GOP"
       }
     }
   }

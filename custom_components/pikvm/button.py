@@ -9,6 +9,7 @@ from homeassistant.components.button import (
     ButtonEntity,
     ButtonEntityDescription,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -34,7 +35,6 @@ BUTTONS: tuple[PikvmButtonDescription, ...] = (
     PikvmButtonDescription(
         key="atx_power_short",
         translation_key="atx_power_short",
-        device_class=ButtonDeviceClass.RESTART,
         icon="mdi:power",
         button_type="power",
     ),
@@ -47,8 +47,23 @@ BUTTONS: tuple[PikvmButtonDescription, ...] = (
     PikvmButtonDescription(
         key="atx_reset",
         translation_key="atx_reset",
+        device_class=ButtonDeviceClass.RESTART,
         icon="mdi:restart",
         button_type="reset",
+    ),
+    PikvmButtonDescription(
+        key="hid_reset",
+        translation_key="hid_reset",
+        entity_category=EntityCategory.CONFIG,
+        icon="mdi:keyboard-off-outline",
+        button_type="hid_reset",
+    ),
+    PikvmButtonDescription(
+        key="streamer_reset",
+        translation_key="streamer_reset",
+        entity_category=EntityCategory.CONFIG,
+        icon="mdi:video-off-outline",
+        button_type="streamer_reset",
     ),
 )
 
@@ -102,11 +117,18 @@ class PikvmButton(PikvmEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Send ATX button press."""
+        client = self.coordinator.client
+        button_type = self.entity_description.button_type
         try:
-            await self.coordinator.client.atx_click(self.entity_description.button_type)
+            if button_type == "hid_reset":
+                await client.reset_hid()
+            elif button_type == "streamer_reset":
+                await client.reset_streamer()
+            else:
+                await client.atx_click(button_type)
         except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
             raise HomeAssistantError(
-                f"Failed to send ATX {self.entity_description.button_type}: {err}"
+                f"Failed to press {button_type}: {err}"
             ) from err
 
 
