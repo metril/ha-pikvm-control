@@ -138,6 +138,7 @@ Type a text string on the remote system.
 
 ## Requirements
 
+- PiKVM OS with kvmd from May 2026 or later (run `pikvm-update`). Older kvmd builds use a different WebSocket payload format and are not supported.
 - A PiKVM device accessible over the network
 - PiKVM credentials (plus TOTP secret if 2FA is enabled)
 - Home Assistant 2026.1 or newer

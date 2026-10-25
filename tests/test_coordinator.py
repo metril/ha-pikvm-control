@@ -51,7 +51,7 @@ def test_no_aliasing(coord):
     msg(coord, "streamer", {"params": {"quality": 80}})
     prev = coord.pubs[-1]["streamer"]
     prev_params = prev["params"]
-    msg(coord, "streamer_state", {"params": {"quality": 50}})
+    msg(coord, "streamer", {"params": {"quality": 50}})
     assert prev["params"] is prev_params and prev_params["quality"] == 80
     assert coord.pubs[-1]["streamer"] is not prev
     assert coord._state["streamer"]["params"]["quality"] == 50
@@ -62,28 +62,26 @@ def test_no_aliasing(coord):
     assert old_leds == {"power": True, "hdd": False}
     assert coord._state["atx"]["leds"] == {"power": True, "hdd": True}
 
-    msg(coord, "gpio", {"inputs": {"a": {"online": True, "state": False}}})
+    msg(coord, "gpio", {"state": {"inputs": {"a": {"online": True, "state": False}}}})
     og = coord.pubs[-1]["gpio"]["inputs"]["a"]
-    msg(coord, "gpio", {"inputs": {"a": {"state": True}}})
+    msg(coord, "gpio", {"state": {"inputs": {"a": {"state": True}}}})
     assert og["state"] is False
     assert coord._state["gpio"]["inputs"]["a"] == {"online": True, "state": True}
 
 
 def test_info_events(coord):
-    msg(coord, "info_system_state", {"kvmd": {"version": "4.1"}})
-    msg(coord, "info_meta_state", {"server": {"host": "pikvm.lan"}})
-    msg(coord, "info_hw_state", {
-        "platform": {"model": "v3", "base": "rpi4", "serial": "abc"},
-        "health": {"temp": {"cpu": 50.0},
-                   "throttling": {"parsed_flags": {"undervoltage": {"now": True}}}},
-    })
+    msg(coord, "info", {"system": {"kvmd": {"version": "4.1"},
+                                   "platform": {"model": "v3", "base": "rpi4", "serial": "abc"}}})
+    msg(coord, "info", {"node": {"host": "pikvm.lan"}})
+    msg(coord, "info", {"health": {"temp": {"cpu": 50.0},
+                                   "throttling": {"parsed_flags": {"undervoltage": {"now": True}}}}})
     assert coord._state["info"] == {"kvmd_version": "4.1", "hostname": "pikvm.lan",
                                     "model": "v3", "base": "rpi4", "serial": "abc"}
     assert coord._state["system"]["cpu_temp"] == 50.0
     assert coord._state["system"]["throttling"]["undervoltage"] is True
     n = len(coord.pubs)
-    msg(coord, "info_hw_state", {"platform": {"model": "v3"}, "health": {"temp": {"cpu": 50.0}}})
-    msg(coord, "info_system_state", {"kvmd": {"version": "4.1"}})
+    msg(coord, "info", {"health": {"temp": {"cpu": 50.0}}})
+    msg(coord, "info", {"system": {"kvmd": {"version": "4.1"}}})
     assert len(coord.pubs) == n
 
 
@@ -144,12 +142,12 @@ def test_gpio_labels_and_model(coord):
     })
     assert coord._state["gpio_labels"] == {"ch1_led": "Port 1", "ch1_button": "Port 1"}
     assert "ch1_led" in coord._state["gpio_model"]["inputs"]
-    msg(coord, "gpio", {"inputs": {"ch1_led": {"state": True}}})
+    msg(coord, "gpio", {"state": {"inputs": {"ch1_led": {"state": True}}}})
     assert coord._state["gpio"]["inputs"]["ch1_led"] == {"online": True, "state": True}
 
 
 def test_gpio_modern_wrapped_state(coord):
-    """kvmd >= May 2026 wraps diffs in {"state": ...} (what the web UI reads)."""
+    """kvmd wraps diffs in {"state": ...} (what the web UI reads)."""
     coord._process_gpio_full({
         "model": {"scheme": {"inputs": {"ch1_led": {}, "ch2_led": {}}, "outputs": {}}},
         "state": {"inputs": {"ch1_led": {"online": True, "state": True},
@@ -174,7 +172,7 @@ def test_gpio_modern_wrapped_state(coord):
 
 
 def test_info_modern_fields(coord):
-    """Modern kvmd `info` event: {health|system|node: ...} at top level."""
+    """`info` event: {health|system|node|meta: ...} at top level."""
     msg(coord, "info", {"health": {"temp": {"cpu": 51.2}, "cpu": {"percent": 7},
                                    "mem": {"percent": 30}}})
     assert coord._state["system"]["cpu_temp"] == 51.2
