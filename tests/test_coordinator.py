@@ -146,3 +146,46 @@ def test_gpio_labels_and_model(coord):
     assert "ch1_led" in coord._state["gpio_model"]["inputs"]
     msg(coord, "gpio", {"inputs": {"ch1_led": {"state": True}}})
     assert coord._state["gpio"]["inputs"]["ch1_led"] == {"online": True, "state": True}
+
+
+def test_gpio_modern_wrapped_state(coord):
+    """kvmd >= May 2026 wraps diffs in {"state": ...} (what the web UI reads)."""
+    coord._process_gpio_full({
+        "model": {"scheme": {"inputs": {"ch1_led": {}, "ch2_led": {}}, "outputs": {}}},
+        "state": {"inputs": {"ch1_led": {"online": True, "state": True},
+                             "ch2_led": {"online": True, "state": False}}, "outputs": {}},
+    })
+    n = len(coord.pubs)
+    msg(coord, "gpio", {"state": {"inputs": {"ch1_led": {"online": True, "state": False},
+                                             "ch2_led": {"online": True, "state": True}}}})
+    assert coord._state["gpio"]["inputs"]["ch2_led"]["state"] is True
+    assert coord._state["gpio"]["inputs"]["ch1_led"]["state"] is False
+    assert len(coord.pubs) == n + 1
+    # full resync carries model + state
+    msg(coord, "gpio", {
+        "model": {"scheme": {"inputs": {"ch1_led": {}, "ch2_led": {}, "ch3_led": {}}, "outputs": {}},
+                  "view": {"table": [[{"type": "label", "text": "P3"},
+                                      {"type": "input", "channel": "ch3_led"}]]}},
+        "state": {"inputs": {"ch3_led": {"online": True, "state": False}}, "outputs": {}},
+    })
+    assert "ch3_led" in coord._state["gpio_model"]["inputs"]
+    assert coord._state["gpio_labels"] == {"ch3_led": "P3"}
+    assert coord._state["gpio"]["inputs"]["ch3_led"]["state"] is False
+
+
+def test_info_modern_fields(coord):
+    """Modern kvmd `info` event: {health|system|node: ...} at top level."""
+    msg(coord, "info", {"health": {"temp": {"cpu": 51.2}, "cpu": {"percent": 7},
+                                   "mem": {"percent": 30}}})
+    assert coord._state["system"]["cpu_temp"] == 51.2
+    assert coord._state["system"]["cpu_percent"] == 7
+    msg(coord, "info", {"system": {"kvmd": {"version": "4.99"},
+                                   "platform": {"model": "v4plus", "base": "rpi4", "serial": "abc"}}})
+    assert coord._state["info"]["kvmd_version"] == "4.99"
+    assert coord._state["info"]["model"] == "v4plus"
+    msg(coord, "info", {"meta": {"server": {"host": "meta-name"}}})
+    assert coord._state["info"]["hostname"] == "meta-name"
+    msg(coord, "info", {"node": {"host": "pikvm"}})
+    assert coord._state["info"]["hostname"] == "pikvm"
+    msg(coord, "info", {"meta": {"server": {"host": "meta-name"}}})
+    assert coord._state["info"]["hostname"] == "pikvm"

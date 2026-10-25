@@ -44,6 +44,14 @@ HA Core (integration) --WebSocket--> PiKVM device (wss://.../api/ws?stream=0)
 
 ## Critical Design Decisions & Gotchas
 
+### Modern kvmd (May 2026+) wraps GPIO and info WebSocket payloads
+`gpio` events are `{"state": {inputs?, outputs?}}` for diffs and `{"model": ..., "state": ...}`
+on a full resync (the PiKVM web UI reads `state.state.inputs`). `info` events are
+`{field: value}` with field in `system`/`meta`/`health`/`node`/`fan`/...; `hw` only exists in the
+legacy HTTP `/api/info` response (and legacy `info_hw_state`). `_process_gpio_state_event` and
+`_process_info` accept both shapes. **A KVM Port select stuck on the old port means the GPIO
+event is not being parsed.**
+
 ### WebSocket event names do NOT have `_state` suffix
 PiKVM sends `gpio`, `atx`, `hid`, `msd`, `info` — NOT `gpio_state`, `atx_state`, etc. The coordinator matches both formats for safety. **This was the root cause of all state update failures in early versions.**
 
