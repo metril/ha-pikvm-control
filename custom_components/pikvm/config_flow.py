@@ -34,6 +34,7 @@ from .api import (
 from .const import (
     CONF_HDD_HOLD_TIME,
     CONF_HTTP_TIMEOUT,
+    CONF_KEEP_VIDEO_ACTIVE,
     CONF_PIKVM_PASS,
     CONF_PIKVM_TOTP_SECRET,
     CONF_PIKVM_URL,
@@ -42,6 +43,7 @@ from .const import (
     CONF_WS_RECONNECT_DELAY,
     DEFAULT_HDD_HOLD_TIME,
     DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_KEEP_VIDEO_ACTIVE,
     DEFAULT_WS_RECONNECT_DELAY,
     DOMAIN,
 )
@@ -260,6 +262,12 @@ class PikvmOptionsFlowHandler(OptionsFlowWithReload):
                         CONF_HTTP_TIMEOUT,
                         default=options.get(CONF_HTTP_TIMEOUT, DEFAULT_HTTP_TIMEOUT),
                     ): _slider(5, 60),
+                    vol.Optional(
+                        CONF_KEEP_VIDEO_ACTIVE,
+                        default=options.get(
+                            CONF_KEEP_VIDEO_ACTIVE, DEFAULT_KEEP_VIDEO_ACTIVE
+                        ),
+                    ): bool,
                 }
             ),
         )
