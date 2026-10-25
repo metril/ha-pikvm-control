@@ -9,7 +9,9 @@ A comprehensive Home Assistant custom integration for [PiKVM](https://pikvm.org/
 ## Features
 
 - **ATX Power Control** — Power, power long (force shutdown), and reset buttons
-- **System Health Monitoring** — CPU temperature, CPU usage, memory usage
+- **System Health Monitoring** — CPU temperature, CPU usage, memory usage (diagnostic), kvmd version, hostname
+- **Video Streamer** — Resolution, captured FPS, HDMI signal, plus Desired FPS / JPEG quality / H.264 controls
+- **HID Status** — Keyboard/mouse online sensors, Mouse/Keyboard Output selects, HID and streamer reset buttons
 - **Throttling Detection** — Undervoltage, frequency capping, and thermal throttling binary sensors
 - **HID Control** — Jiggler toggle, HID connect/disconnect switch
 - **Mass Storage Device** — MSD connect/disconnect switch
@@ -46,6 +48,14 @@ During setup you'll be asked for:
 | **TOTP Secret** | Optional. TOTP secret key for two-factor authentication (leave blank if 2FA is disabled) |
 | **Verify SSL** | Whether to verify SSL certificates (default: off) |
 
+### Options
+
+| Option | Description |
+|--------|-------------|
+| **Keep video capture active** | Opens the WebSocket with `stream=1` so kvmd keeps capture running. Without it, Resolution, Captured FPS and HDMI Signal read unknown when nobody is viewing the stream. Raises PiKVM CPU usage (default: off) |
+
+> **Resolution note:** the Resolution select only appears on PiKVMs whose streamer reports `features.resolution` (USB-capture V0/V1/V2). On V3/V4 the resolution follows the host's EDID and cannot be set from the integration; the Resolution sensor still reports it.
+
 ## Entities
 
 ### Buttons
@@ -54,6 +64,8 @@ During setup you'll be asked for:
 | ATX Power | Short power button press |
 | ATX Power Long | Long power button press (force shutdown) |
 | ATX Reset | Reset button press |
+| HID Reset | Reset the HID subsystem |
+| Streamer Reset | Reset the video streamer |
 
 ### Binary Sensors
 | Entity | Description |
@@ -63,14 +75,22 @@ During setup you'll be asked for:
 | Undervoltage | PiKVM undervoltage detected (diagnostic) |
 | Frequency Capped | CPU frequency capping active (diagnostic) |
 | Throttled | CPU thermal throttling active (diagnostic) |
+| HDMI Signal | Video signal detected on the capture input |
+| Keyboard Online | Emulated keyboard online (diagnostic) |
+| Mouse Online | Emulated mouse online (diagnostic) |
+| WebSocket Connected | Integration WebSocket link state (diagnostic) |
 | GPIO [name] | Auto-discovered GPIO input channels |
 
 ### Sensors
 | Entity | Description |
 |--------|-------------|
-| CPU Temperature | PiKVM CPU temperature |
-| CPU Usage | PiKVM CPU usage percentage |
-| Memory Usage | PiKVM memory usage percentage |
+| CPU Temperature | PiKVM CPU temperature (diagnostic) |
+| CPU Usage | PiKVM CPU usage percentage (diagnostic) |
+| Memory Usage | PiKVM memory usage percentage (diagnostic) |
+| Resolution | Captured video resolution |
+| Captured FPS | Frames per second captured |
+| kvmd Version | PiKVM kvmd version (diagnostic) |
+| Hostname | PiKVM hostname (diagnostic) |
 
 ### Switches
 | Entity | Description |
@@ -79,6 +99,23 @@ During setup you'll be asked for:
 | HID Connected | Connect/disconnect HID (keyboard/mouse) from remote system |
 | MSD Connected | Connect/disconnect virtual USB drive |
 | GPIO [name] | Auto-discovered GPIO output channels with switch capability |
+
+### Selects
+| Entity | Description |
+|--------|-------------|
+| KVM Port | Active port on ezcoo-style KVM switches (auto-detected) |
+| MSD Image | Mass storage image to mount |
+| Resolution | Streamer resolution (USB-capture models only, see note above) |
+| Mouse Output | Active mouse output (USB, Bluetooth, ...) |
+| Keyboard Output | Active keyboard output |
+
+### Numbers
+| Entity | Description |
+|--------|-------------|
+| Desired FPS | Target streamer frame rate |
+| JPEG Quality | Streamer JPEG quality |
+| H.264 Bitrate | H.264 bitrate (disabled by default) |
+| H.264 GOP | H.264 GOP size (disabled by default) |
 
 ## Services
 
