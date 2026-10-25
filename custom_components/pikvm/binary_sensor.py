@@ -164,8 +164,8 @@ class PikvmWebsocketBinarySensor(PikvmBinarySensor):
 
     @property
     def available(self) -> bool:
-        """Return coordinator success only, ignoring WebSocket availability."""
-        return self.coordinator.last_update_success
+        """Stay available while the WebSocket is down so it can report off."""
+        return self.coordinator.data is not None
 
 
 class PikvmHddActivityBinarySensor(PikvmBinarySensor):
@@ -210,8 +210,9 @@ class PikvmHddActivityBinarySensor(PikvmBinarySensor):
             self._hold_timer = async_call_later(
                 self.hass, hold_time, self._timer_expired
             )
-            self.async_write_ha_state()
-        # If raw_value is False/None, do nothing — the timer will handle OFF
+        # If raw_value is False/None the hold timer handles OFF; still write
+        # state so availability changes published by the coordinator propagate.
+        self.async_write_ha_state()
 
     @callback
     def _timer_expired(self, _now: Any) -> None:

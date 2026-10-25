@@ -191,6 +191,7 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 err: Exception = ConnectionError("WebSocket closed by server")
             except PikvmAuthError as auth_err:
                 _LOGGER.error("PiKVM WebSocket auth failed: %s", auth_err)
+                self._mark_ws_down()
                 if self.last_update_success:
                     self.async_set_update_error(auth_err)
                 self.config_entry.async_start_reauth(self.hass)
@@ -212,8 +213,6 @@ class PikvmDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning(
                 "PiKVM WebSocket disconnected: %s. Reconnecting in %ds", err, delay
             )
-            if self.last_update_success:
-                self.async_set_update_error(err)
             await asyncio.sleep(delay)
             delay = min(delay * 2, MAX_WS_RECONNECT_DELAY)
 
