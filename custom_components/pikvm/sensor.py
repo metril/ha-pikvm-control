@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -24,7 +24,7 @@ from .entity import PikvmEntity
 class PikvmSensorDescription(SensorEntityDescription):
     """Describes a PiKVM sensor."""
 
-    value_fn: Callable[[dict[str, Any]], float | None] = lambda data: None
+    value_fn: Callable[[dict[str, Any]], float | str | None] = lambda data: None
 
 
 SENSORS: tuple[PikvmSensorDescription, ...] = (
@@ -34,6 +34,7 @@ SENSORS: tuple[PikvmSensorDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
         suggested_display_precision=1,
         value_fn=lambda data: data.get("system", {}).get("cpu_temp"),
     ),
@@ -42,6 +43,7 @@ SENSORS: tuple[PikvmSensorDescription, ...] = (
         translation_key="cpu_usage",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:cpu-64-bit",
         value_fn=lambda data: data.get("system", {}).get("cpu_percent"),
     ),
@@ -50,8 +52,37 @@ SENSORS: tuple[PikvmSensorDescription, ...] = (
         translation_key="memory_usage",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:memory",
         value_fn=lambda data: data.get("system", {}).get("mem_percent"),
+    ),
+    PikvmSensorDescription(
+        key="resolution",
+        translation_key="resolution",
+        icon="mdi:monitor-screenshot",
+        value_fn=lambda data: data.get("streamer", {}).get("resolution"),
+    ),
+    PikvmSensorDescription(
+        key="captured_fps",
+        translation_key="captured_fps",
+        native_unit_of_measurement="fps",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:video",
+        value_fn=lambda data: data.get("streamer", {}).get("captured_fps"),
+    ),
+    PikvmSensorDescription(
+        key="kvmd_version",
+        translation_key="kvmd_version",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:tag",
+        value_fn=lambda data: data.get("info", {}).get("kvmd_version"),
+    ),
+    PikvmSensorDescription(
+        key="hostname",
+        translation_key="hostname",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:server-network",
+        value_fn=lambda data: data.get("info", {}).get("hostname"),
     ),
 )
 
@@ -86,7 +117,7 @@ class PikvmSensor(PikvmEntity, SensorEntity):
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float | str | None:
         """Return the sensor value."""
         if self.coordinator.data is None:
             return None

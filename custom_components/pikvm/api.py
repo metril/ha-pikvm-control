@@ -93,13 +93,15 @@ class PikvmApiClient:
         if remaining < 2:
             await asyncio.sleep(remaining + 0.1)
 
-    async def _request(
+    async def _send(
         self,
         method: str,
         path: str,
+        *,
+        raw: bool,
         **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Make an authenticated HTTP request to PiKVM."""
+    ) -> Any:
+        """Make an authenticated HTTP request (JSON dict, or bytes when raw)."""
         url = f"{self._url}{path}"
         _LOGGER.debug("PiKVM API: %s %s", method, path)
         for attempt in (0, 1):
@@ -125,8 +127,12 @@ class PikvmApiClient:
                             f"Authentication failed (HTTP {resp.status})"
                         )
                     if resp.status != 200:
+                        if raw:
+                            raise PikvmApiError(f"API error: HTTP {resp.status}")
                         text = await resp.text()
                         raise PikvmApiError(f"API error: HTTP {resp.status}: {text}")
+                    if raw:
+                        return await resp.read()
                     data = await resp.json()
                     # PiKVM may return 200 with ok:false on errors
                     if not data.get("ok", True):
@@ -150,42 +156,13 @@ class PikvmApiClient:
                 raise PikvmConnectionError(f"Connection error: {err}") from err
         raise PikvmAuthError("Authentication failed")  # pragma: no cover
 
-    async def _request_raw(
-        self,
-        method: str,
-        path: str,
-        **kwargs: Any,
-    ) -> bytes:
+    async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        """Make an authenticated HTTP request to PiKVM (JSON)."""
+        return await self._send(method, path, raw=False, **kwargs)
+
+    async def _request_raw(self, method: str, path: str, **kwargs: Any) -> bytes:
         """Make an authenticated HTTP request returning raw bytes."""
-        url = f"{self._url}{path}"
-        for attempt in (0, 1):
-            try:
-                async with self._session.request(
-                    method,
-                    url,
-                    auth=self._auth(),
-                    timeout=aiohttp.ClientTimeout(total=self._http_timeout),
-                    **kwargs,
-                ) as resp:
-                    if resp.status in (401, 403):
-                        if attempt == 0 and self._totp is not None:
-                            await self._wait_fresh_code()
-                            continue
-                        raise PikvmAuthError(
-                            f"Authentication failed (HTTP {resp.status})"
-                        )
-                    if resp.status != 200:
-                        raise PikvmApiError(f"API error: HTTP {resp.status}")
-                    return await resp.read()
-            except (PikvmAuthError, PikvmApiError):
-                raise
-            except TimeoutError as err:
-                raise PikvmConnectionError(
-                    f"Timeout connecting to PiKVM: {err}"
-                ) from err
-            except aiohttp.ClientError as err:
-                raise PikvmConnectionError(f"Connection error: {err}") from err
-        raise PikvmAuthError("Authentication failed")  # pragma: no cover
+        return await self._send(method, path, raw=True, **kwargs)
 
     # --- Connection test ---
 
@@ -205,10 +182,27 @@ class PikvmApiClient:
         data = await self._request("GET", "/api/atx")
         return data.get("result", {})
 
-    async def get_system_info(self) -> dict[str, Any]:
-        """Get system hardware info (CPU, memory, throttling)."""
-        data = await self._request("GET", "/api/info", params={"fields": "hw"})
+    async def get_system_info(self, fields: str = "hw,system,meta") -> dict[str, Any]:
+        """Get system info (hw health, kvmd system, meta)."""
+        data = await self._request("GET", "/api/info", params={"fields": fields})
         return data.get("result", {})
+
+    async def get_streamer_state(self) -> dict[str, Any]:
+        """Get video streamer state, features, limits and params."""
+        data = await self._request("GET", "/api/streamer")
+        return data.get("result", {})
+
+    async def set_streamer_params(self, **params: Any) -> None:
+        """Set streamer params (resolution, desired_fps, quality, h264_*)."""
+        await self._request(
+            "POST",
+            "/api/streamer/set_params",
+            params={k: str(v) for k, v in params.items() if v is not None},
+        )
+
+    async def reset_streamer(self) -> None:
+        """Reset the video streamer."""
+        await self._request("POST", "/api/streamer/reset")
 
     async def get_hid_state(self) -> dict[str, Any]:
         """Get HID device state."""
@@ -250,6 +244,17 @@ class PikvmApiClient:
             "/api/hid/set_connected",
             params={"connected": "1" if connected else "0"},
         )
+
+    async def set_hid_output(
+        self, keyboard: str | None = None, mouse: str | None = None
+    ) -> None:
+        """Set HID keyboard and/or mouse output."""
+        params: dict[str, str] = {}
+        if keyboard is not None:
+            params["keyboard_output"] = keyboard
+        if mouse is not None:
+            params["mouse_output"] = mouse
+        await self._request("POST", "/api/hid/set_params", params=params)
 
     async def reset_hid(self) -> None:
         """Reset HID to default state."""
@@ -330,7 +335,9 @@ class PikvmApiClient:
 
     # --- WebSocket ---
 
-    async def connect_ws(self) -> aiohttp.ClientWebSocketResponse:
+    async def connect_ws(
+        self, stream: bool = False
+    ) -> aiohttp.ClientWebSocketResponse:
         """Establish WebSocket connection for real-time state updates.
 
         Returns the WebSocket connection. The caller is responsible for
@@ -343,7 +350,7 @@ class PikvmApiClient:
             try:
                 return await self._session.ws_connect(
                     ws_url,
-                    params={"stream": "0"},
+                    params={"stream": "1" if stream else "0"},
                     headers=self._auth_headers(),
                     heartbeat=30,
                 )

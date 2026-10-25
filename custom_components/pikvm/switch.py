@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
@@ -20,8 +19,6 @@ from .entity import (
     get_kvm_channel_names,
     gpio_display_name,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 1
 
@@ -74,7 +71,7 @@ async def async_setup_entry(
             continue
 
         if "usb_breaker" in channel_name:
-            entities.append(PikvmUsbConnectionSwitch(coordinator, entry, channel_name))
+            entities.append(PikvmGpioSwitch(coordinator, entry, channel_name, usb=True))
         elif not channel_name.startswith("__"):
             entities.append(PikvmGpioSwitch(coordinator, entry, channel_name))
 
@@ -110,7 +107,7 @@ class PikvmSwitch(PikvmEntity, SwitchEntity):
             await self.entity_description.turn_on_fn(self.coordinator.client)
         except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
             raise HomeAssistantError(f"Failed to control PiKVM: {err}") from err
-        self._optimistic_update(True)
+        self.coordinator.push_partial("hid", jiggler=True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off."""
@@ -118,40 +115,37 @@ class PikvmSwitch(PikvmEntity, SwitchEntity):
             await self.entity_description.turn_off_fn(self.coordinator.client)
         except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
             raise HomeAssistantError(f"Failed to control PiKVM: {err}") from err
-        self._optimistic_update(False)
-
-    def _optimistic_update(self, state: bool) -> None:
-        """Optimistically update coordinator state after successful API call.
-
-        Needed because the WebSocket may not push back all state changes
-        (e.g., jiggler state is not included in hid_state WS events).
-        """
-        if self.coordinator.data is None:
-            return
-        key = self.entity_description.key
-        if key == "hid_jiggler":
-            self.coordinator.data.setdefault("hid", {})["jiggler"] = state
-        self.coordinator.async_set_updated_data(self.coordinator.data)
+        self.coordinator.push_partial("hid", jiggler=False)
 
 
 class PikvmGpioSwitch(PikvmEntity, SwitchEntity):
-    """A PiKVM GPIO output channel as a switch."""
+    """A PiKVM GPIO output channel as a switch.
+
+    With ``usb=True`` it is the dedicated "USB Connection" switch backed by the
+    ``__v3_usb_breaker__`` channel ("Connect main USB to server" in the web UI).
+    """
 
     def __init__(
         self,
         coordinator: PikvmDataUpdateCoordinator,
         entry: PikvmConfigEntry,
         channel_name: str,
+        usb: bool = False,
     ) -> None:
         """Initialize the GPIO switch."""
         super().__init__(coordinator, entry)
         self._channel_name = channel_name
-        self._attr_unique_id = f"{entry.entry_id}_gpio_out_{channel_name}"
-        gpio_labels = (
-            coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
-        )
-        self._attr_name = gpio_display_name(channel_name, gpio_labels)
-        self._attr_icon = "mdi:electric-switch"
+        if usb:
+            self._attr_unique_id = f"{entry.entry_id}_usb_connection"
+            self._attr_translation_key = "usb_connection"
+            self._attr_icon = "mdi:usb"
+        else:
+            self._attr_unique_id = f"{entry.entry_id}_gpio_out_{channel_name}"
+            gpio_labels = (
+                coordinator.data.get("gpio_labels", {}) if coordinator.data else {}
+            )
+            self._attr_name = gpio_display_name(channel_name, gpio_labels)
+            self._attr_icon = "mdi:electric-switch"
 
     @property
     def is_on(self) -> bool | None:
@@ -159,8 +153,7 @@ class PikvmGpioSwitch(PikvmEntity, SwitchEntity):
         if self.coordinator.data is None:
             return None
         outputs = self.coordinator.data.get("gpio", {}).get("outputs", {})
-        channel = outputs.get(self._channel_name, {})
-        return channel.get("state")
+        return outputs.get(self._channel_name, {}).get("state")
 
     @property
     def available(self) -> bool:
@@ -173,17 +166,26 @@ class PikvmGpioSwitch(PikvmEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on GPIO channel."""
-        try:
-            await self.coordinator.client.gpio_switch(self._channel_name, True)
-        except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
-            raise HomeAssistantError(f"Failed to control PiKVM: {err}") from err
+        await self._set(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off GPIO channel."""
+        await self._set(False)
+
+    async def _set(self, state: bool) -> None:
+        """Switch the channel and optimistically update state."""
         try:
-            await self.coordinator.client.gpio_switch(self._channel_name, False)
+            await self.coordinator.client.gpio_switch(self._channel_name, state)
         except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
             raise HomeAssistantError(f"Failed to control PiKVM: {err}") from err
+        outputs = (self.coordinator.data or {}).get("gpio", {}).get("outputs", {})
+        self.coordinator.push_partial(
+            "gpio",
+            outputs={
+                **outputs,
+                self._channel_name: {**outputs.get(self._channel_name, {}), "state": state},
+            },
+        )
 
 
 class PikvmMsdSwitch(PikvmEntity, SwitchEntity):
@@ -234,71 +236,3 @@ class PikvmMsdSwitch(PikvmEntity, SwitchEntity):
             await self.coordinator.client.set_msd_connected(False)
         except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
             raise HomeAssistantError(f"Failed to control PiKVM: {err}") from err
-
-
-class PikvmUsbConnectionSwitch(PikvmEntity, SwitchEntity):
-    """Switch to connect/disconnect main USB to the server.
-
-    Maps to the __v3_usb_breaker__ (or similar) GPIO channel.
-    This is the "Connect main USB to server" toggle in the PiKVM web UI.
-    """
-
-    _attr_translation_key = "usb_connection"
-    _attr_icon = "mdi:usb"
-
-    def __init__(
-        self,
-        coordinator: PikvmDataUpdateCoordinator,
-        entry: PikvmConfigEntry,
-        channel_name: str,
-    ) -> None:
-        """Initialize the USB connection switch."""
-        super().__init__(coordinator, entry)
-        self._channel_name = channel_name
-        self._attr_unique_id = f"{entry.entry_id}_usb_connection"
-
-    @property
-    def is_on(self) -> bool | None:
-        """Return True when USB is connected to server."""
-        if self.coordinator.data is None:
-            return None
-        outputs = self.coordinator.data.get("gpio", {}).get("outputs", {})
-        channel = outputs.get(self._channel_name, {})
-        return channel.get("state")
-
-    @property
-    def available(self) -> bool:
-        """Return if the USB breaker channel is online."""
-        if self.coordinator.data is None:
-            return False
-        outputs = self.coordinator.data.get("gpio", {}).get("outputs", {})
-        channel = outputs.get(self._channel_name, {})
-        return channel.get("online", False) and super().available
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Connect USB to the server."""
-        _LOGGER.debug("USB Connection: turning ON (channel=%s)", self._channel_name)
-        try:
-            await self.coordinator.client.gpio_switch(self._channel_name, True)
-        except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
-            raise HomeAssistantError(f"Failed to control PiKVM: {err}") from err
-        _LOGGER.debug(
-            "USB Connection: API call succeeded, current state in coordinator: %s",
-            self.coordinator.data.get("gpio", {})
-            .get("outputs", {})
-            .get(self._channel_name),
-        )
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disconnect USB from the server."""
-        _LOGGER.debug("USB Connection: turning OFF (channel=%s)", self._channel_name)
-        try:
-            await self.coordinator.client.gpio_switch(self._channel_name, False)
-        except (PikvmAuthError, PikvmConnectionError, PikvmApiError) as err:
-            raise HomeAssistantError(f"Failed to control PiKVM: {err}") from err
-        _LOGGER.debug(
-            "USB Connection: API call succeeded, current state in coordinator: %s",
-            self.coordinator.data.get("gpio", {})
-            .get("outputs", {})
-            .get(self._channel_name),
-        )

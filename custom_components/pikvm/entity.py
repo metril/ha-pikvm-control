@@ -94,6 +94,14 @@ def get_kvm_channel_names(kvm_ports: list[dict[str, Any]]) -> set[str]:
     return names
 
 
+def kvm_channel_names(coordinator: PikvmDataUpdateCoordinator) -> set[str]:
+    """Return GPIO channel names consumed by the detected KVM port select."""
+    data = coordinator.data or {}
+    return get_kvm_channel_names(
+        detect_kvm_ports(data.get("gpio_model", {}), data.get("gpio_labels", {}))
+    )
+
+
 class PikvmEntity(CoordinatorEntity[PikvmDataUpdateCoordinator]):
     """Base entity for PiKVM devices."""
 
@@ -114,8 +122,15 @@ class PikvmEntity(CoordinatorEntity[PikvmDataUpdateCoordinator]):
             manufacturer="PiKVM",
             configuration_url=entry.data[CONF_PIKVM_URL],
         )
-        if sw_version := info.get("version"):
-            device_info["sw_version"] = sw_version
-        if model := info.get("model"):
+        if model := info.get("model") or info.get("base"):
             device_info["model"] = model
+        if sw_version := info.get("kvmd_version"):
+            device_info["sw_version"] = sw_version
+        if serial := info.get("serial"):
+            device_info["serial_number"] = serial
         self._attr_device_info = device_info
+
+    @property
+    def available(self) -> bool:
+        """Return True if the coordinator succeeded and the WebSocket is healthy."""
+        return super().available and self.coordinator.ws_available

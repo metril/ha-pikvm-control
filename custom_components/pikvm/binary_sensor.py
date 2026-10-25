@@ -73,6 +73,33 @@ BINARY_SENSORS: tuple[PikvmBinarySensorDescription, ...] = (
             data.get("system", {}).get("throttling", {}).get("throttled")
         ),
     ),
+    PikvmBinarySensorDescription(
+        key="hdmi_signal",
+        translation_key="hdmi_signal",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        value_fn=lambda data: data.get("streamer", {}).get("online"),
+    ),
+    PikvmBinarySensorDescription(
+        key="keyboard_online",
+        translation_key="keyboard_online",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.get("hid", {}).get("keyboard_online"),
+    ),
+    PikvmBinarySensorDescription(
+        key="mouse_online",
+        translation_key="mouse_online",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.get("hid", {}).get("mouse_online"),
+    ),
+    PikvmBinarySensorDescription(
+        key="websocket_connected",
+        translation_key="websocket_connected",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.get("ws_connected"),
+    ),
 )
 
 PARALLEL_UPDATES = 0
@@ -90,6 +117,8 @@ async def async_setup_entry(
     for desc in BINARY_SENSORS:
         if desc.key == "hdd_activity":
             entities.append(PikvmHddActivityBinarySensor(coordinator, entry, desc))
+        elif desc.key == "websocket_connected":
+            entities.append(PikvmWebsocketBinarySensor(coordinator, entry, desc))
         else:
             entities.append(PikvmBinarySensor(coordinator, entry, desc))
 
@@ -128,6 +157,15 @@ class PikvmBinarySensor(PikvmEntity, BinarySensorEntity):
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
+
+
+class PikvmWebsocketBinarySensor(PikvmBinarySensor):
+    """WebSocket link state; stays available while the WebSocket is down."""
+
+    @property
+    def available(self) -> bool:
+        """Stay available while the WebSocket is down so it can report off."""
+        return self.coordinator.data is not None
 
 
 class PikvmHddActivityBinarySensor(PikvmBinarySensor):
@@ -172,8 +210,9 @@ class PikvmHddActivityBinarySensor(PikvmBinarySensor):
             self._hold_timer = async_call_later(
                 self.hass, hold_time, self._timer_expired
             )
-            self.async_write_ha_state()
-        # If raw_value is False/None, do nothing — the timer will handle OFF
+        # If raw_value is False/None the hold timer handles OFF; still write
+        # state so availability changes published by the coordinator propagate.
+        self.async_write_ha_state()
 
     @callback
     def _timer_expired(self, _now: Any) -> None:
